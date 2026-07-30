@@ -11,3 +11,11 @@ set(EXTRA_COMPONENT_DIRS
 ) 
 
 project(m5stack_tab5)
+
+if(IDF_VERSION_MAJOR GREATER_EQUAL 6 AND CMAKE_C_COMPILER_ID STREQUAL "GNU")
+    idf_component_get_property(lvgl_lib lvgl COMPONENT_LIB)
+    target_compile_options(${lvgl_lib} PRIVATE "-Wno-error=attributes")
+
+    idf_component_get_property(smooth_ui_toolkit_lib smooth_ui_toolkit COMPONENT_LIB)
+    target_compile_options(${smooth_ui_toolkit_lib} PRIVATE "-Wno-error=deprecated")
+endif()

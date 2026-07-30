@@ -147,7 +147,7 @@ private:
         chart->setRange(LV_CHART_AXIS_PRIMARY_Y, -32768, 32767);
         chart->setUpdateMode(LV_CHART_UPDATE_MODE_SHIFT);
         chart->setBgOpa(LV_OPA_TRANSP, LV_PART_ITEMS);
-        chart->setBorderWidth(0, LV_PART_MAIN | LV_STATE_DEFAULT);
+        chart->setBorderWidth(0, LV_PART_MAIN);
         chart->setDivLineCount(0, 0);
         chart->addSeries(lv_color_hex(0x40FFA1), LV_CHART_AXIS_PRIMARY_Y);
     }

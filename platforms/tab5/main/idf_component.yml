@@ -2,9 +2,10 @@
 dependencies:
   ## Required IDF version
   idf: '>=5.3'
-  espressif/esp_hosted: 1.4.0
-  espressif/esp_wifi_remote: 0.8.5
-  chmorgan/esp-audio-player: 1.0.7
+  espressif/esp_h264: 1.0.4
+  espressif/esp_hosted: ^2.11
+  espressif/esp_wifi_remote: ^1.6.3
+  chmorgan/esp-audio-player: 1.1.0
   chmorgan/esp-file-iterator: 1.0.0
-  espressif/led_strip: 3.0.0
-  espressif/esp_lcd_ili9881c: ^1.0.1
+  espressif/led_strip: 3.0.3
+  espressif/esp_lcd_ili9881c: 1.0.1

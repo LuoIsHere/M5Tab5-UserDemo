@@ -1,0 +1,7 @@
+version: "1.0.0"
+description: "ESP LCD ST7121 panel driver"
+targets:
+  - esp32p4
+dependencies:
+  idf: ">=5.3"
+  cmake_utilities: "0.*"

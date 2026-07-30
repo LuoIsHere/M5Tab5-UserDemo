@@ -619,7 +619,7 @@ void imlib_draw_ellipse(image_t *img, int cx, int cy, int rx, int ry, int rotati
 typedef struct {
     uint16_t w;
     uint16_t h;
-    uint8_t *data;
+    const uint8_t *data;
 } font_t;
 
 font_t gfont;

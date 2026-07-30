@@ -6,7 +6,7 @@
 typedef struct {
     int w;
     int h;
-    uint8_t *data;
+    const uint8_t *data;
 } glyph_t;
 
 extern const unsigned char font_ascii_8x16[];

@@ -4,13 +4,19 @@ idf_component_register(
     INCLUDE_DIRS "include"
     INCLUDE_DIRS "include/bsp"
     PRIV_INCLUDE_DIRS "priv_include"
-    REQUIRES 
-        driver 
+    REQUIRES
+        esp_adc
+        esp_driver_gpio
+        esp_driver_i2c
+        esp_driver_i2s
+        esp_driver_ledc
+        esp_driver_sdmmc
         esp_lcd
         esp_codec_dev
         esp_lvgl_port
-	esp_lcd_ili9881c
-    esp_lcd_touch_st7123
-    esp_lcd_st7121
+        esp_lcd_ili9881c
+        esp_lcd_touch_st7123
+        esp_lcd_st7121
+        sdmmc
     PRIV_REQUIRES usb spiffs fatfs
 )

@@ -192,10 +192,7 @@ uint32_t HalEsp32::millis()
 int HalEsp32::getCpuTemp()
 {
     if (_temp_sensor == nullptr) {
-        temperature_sensor_config_t temp_sensor_config = {
-            .range_min = 20,
-            .range_max = 100,
-        };
+        temperature_sensor_config_t temp_sensor_config = TEMPERATURE_SENSOR_CONFIG_DEFAULT(20, 100);
         temperature_sensor_install(&temp_sensor_config, &_temp_sensor);
         temperature_sensor_enable(_temp_sensor);
     }

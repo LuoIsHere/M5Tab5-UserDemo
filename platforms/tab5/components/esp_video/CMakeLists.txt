@@ -8,8 +8,8 @@ set(srcs "src/esp_video_buffer.c"
 
 set(include_dirs "include")
 set(priv_include_dirs "private_include")
-set(priv_requires "vfs")
-set(requires "esp_driver_cam" "esp_driver_isp" "esp_cam_sensor" "esp_h264" "esp_driver_jpeg")
+set(priv_requires "vfs" "esp_driver_gpio")
+set(requires "esp_driver_cam" "esp_driver_isp" "esp_cam_sensor" "esp_h264" "esp_driver_i2c" "esp_driver_jpeg")
 
 if(CONFIG_ESP_VIDEO_ENABLE_MIPI_CSI_VIDEO_DEVICE)
     list(APPEND srcs "src/device/esp_video_csi_device.c")

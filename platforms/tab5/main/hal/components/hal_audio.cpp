@@ -302,6 +302,9 @@ static void _music_play_task(void* param)
         .write_fn   = codec_handle->i2s_write,
         .priority   = 8,
         .coreID     = 1,
+        .force_stereo = false,
+        .write_fn2    = nullptr,
+        .write_ctx    = nullptr,
     };
     ESP_ERROR_CHECK(audio_player_new(config));
     audio_player_callback_register(audio_player_callback, NULL);

@@ -37,6 +37,8 @@ bool INA226::begin(i2c_master_bus_handle_t bus_handle, uint8_t address)
         .dev_addr_length = I2C_ADDR_BIT_LEN_7,
         .device_address  = address,
         .scl_speed_hz    = 400000,
+        .scl_wait_us     = 0,
+        .flags           = {},
     };
     ESP_ERROR_CHECK(i2c_master_bus_add_device(bus_handle, &dev_cfg, &i2c_dev_handle_ina226));
 

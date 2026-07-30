@@ -85,7 +85,7 @@ typedef enum {
  *     - Device descriptor   Success
  *     - -1 error
  */
-int app_video_open(char* dev, example_fmt_t init_fmt)
+int app_video_open(const char* dev, example_fmt_t init_fmt)
 {
     struct v4l2_format default_format;
     struct v4l2_capability capability;
@@ -118,10 +118,11 @@ int app_video_open(char* dev, example_fmt_t init_fmt)
     ESP_LOGI(TAG, "width=%" PRIu32 " height=%" PRIu32, default_format.fmt.pix.width, default_format.fmt.pix.height);
 
     if (default_format.fmt.pix.pixelformat != init_fmt) {
-        struct v4l2_format format = {.type = type,
-                                     .fmt  = {.pix = {.width       = default_format.fmt.pix.width,
-                                                      .height      = default_format.fmt.pix.height,
-                                                      .pixelformat = init_fmt}}};
+        struct v4l2_format format = {};
+        format.type                = type;
+        format.fmt.pix.width       = default_format.fmt.pix.width;
+        format.fmt.pix.height      = default_format.fmt.pix.height;
+        format.fmt.pix.pixelformat = init_fmt;
 
         if (ioctl(fd, VIDIOC_S_FMT, &format) != 0) {
             ESP_LOGE(TAG, "failed to set format");
@@ -234,6 +235,7 @@ void app_camera_display(void* arg)
         .csi  = &csi_config,  // Point to CSI config
         .dvp  = NULL,         // No DVP configuration
         .jpeg = NULL,         // No JPEG configuration
+        .isp  = NULL,         // No standalone ISP configuration
     };
 
     if (!cam_is_initial) {
@@ -278,6 +280,8 @@ void app_camera_display(void* arg)
     ppa_client_config_t ppa_srm_config = {
         .oper_type             = PPA_OPERATION_SRM,
         .max_pending_trans_num = 1,
+        .data_burst_length     = PPA_DATA_BURST_LENGTH_128,
+        .flags                 = {},
     };
     ESP_ERROR_CHECK(ppa_register_client(&ppa_srm_config, &ppa_srm_handle));
 
@@ -298,14 +302,18 @@ void app_camera_display(void* arg)
                                                                .block_h        = 720,
                                                                .block_offset_x = 0,
                                                                .block_offset_y = 0,
-                                                               .srm_cm         = PPA_SRM_COLOR_MODE_RGB565},
+                                                               .srm_cm         = PPA_SRM_COLOR_MODE_RGB565,
+                                                               .yuv_range      = PPA_COLOR_RANGE_FULL,
+                                                               .yuv_std        = PPA_COLOR_CONV_STD_RGB_YUV_BT601},
                                             .out            = {.buffer         = img_show_data,
                                                                .buffer_size    = img_show_size,
                                                                .pic_w          = 1280,
                                                                .pic_h          = 720,
                                                                .block_offset_x = 0,
                                                                .block_offset_y = 0,
-                                                               .srm_cm         = PPA_SRM_COLOR_MODE_RGB565},
+                                                               .srm_cm         = PPA_SRM_COLOR_MODE_RGB565,
+                                                               .yuv_range      = PPA_COLOR_RANGE_FULL,
+                                                               .yuv_std        = PPA_COLOR_CONV_STD_RGB_YUV_BT601},
                                             .rotation_angle = PPA_SRM_ROTATION_ANGLE_0,
                                             .scale_x        = 1,
                                             .scale_y        = 1,
@@ -313,7 +321,10 @@ void app_camera_display(void* arg)
                                             .mirror_y       = false,
                                             .rgb_swap       = false,
                                             .byte_swap      = false,
-                                            .mode           = PPA_TRANS_MODE_BLOCKING};
+                                            .alpha_update_mode = PPA_ALPHA_NO_CHANGE,
+                                            .alpha_fix_val     = 0,
+                                            .mode              = PPA_TRANS_MODE_BLOCKING,
+                                            .user_data         = NULL};
         ppa_do_scale_rotate_mirror(ppa_srm_handle, &srm_config);
 
         // auto detect_results = human_face_detector->run(dl_img); // format: hwc

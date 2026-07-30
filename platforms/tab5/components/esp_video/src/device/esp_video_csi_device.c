@@ -83,7 +83,7 @@ static esp_err_t csi_get_input_frame_type(uint32_t sensor_fmt, cam_ctlr_color_t 
             *csi_in_bpp = 12;
             break;
         case ESP_CAM_SENSOR_PIXFORMAT_YUV422:
-            *csi_color  = CAM_CTLR_COLOR_YUV422;
+            *csi_color  = CAM_CTLR_COLOR_YUV422_UYVY;
             *csi_in_bpp = 16;
             break;
         default:
@@ -116,7 +116,7 @@ static esp_err_t csi_get_output_frame_type_from_v4l2(uint32_t output_fmt, cam_ct
             *out_bpp   = 12;
             break;
         case V4L2_PIX_FMT_YUV422P:
-            *csi_color = CAM_CTLR_COLOR_YUV422;
+            *csi_color = CAM_CTLR_COLOR_YUV422_UYVY;
             *out_bpp   = 16;
             break;
         default:

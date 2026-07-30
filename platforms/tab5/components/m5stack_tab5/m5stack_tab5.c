@@ -550,7 +550,7 @@ void bsp_reset_tp()
 
 static sdmmc_card_t* card;
 
-esp_err_t bsp_sdcard_init(char* mount_point, size_t max_files)
+esp_err_t bsp_sdcard_init(const char* mount_point, size_t max_files)
 {
     esp_err_t ret_val = ESP_OK;
 
@@ -630,7 +630,7 @@ esp_err_t bsp_sdcard_init(char* mount_point, size_t max_files)
     return ret_val;
 }
 
-esp_err_t bsp_sdcard_deinit(char* mount_point)
+esp_err_t bsp_sdcard_deinit(const char* mount_point)
 {
     if (mount_point == NULL) {
         return ESP_ERR_INVALID_STATE;
@@ -856,7 +856,7 @@ esp_codec_dev_handle_t bsp_audio_codec_microphone_init(void)
     es7210_codec_cfg_t es7210_cfg = {
         .ctrl_if = i2c_ctrl_if,  // Codec Control interface
     };
-    es7210_cfg.mic_selected            = ES7120_SEL_MIC1 | ES7120_SEL_MIC2 | ES7120_SEL_MIC3 | ES7120_SEL_MIC4;
+    es7210_cfg.mic_selected            = ES7210_SEL_MIC1 | ES7210_SEL_MIC2 | ES7210_SEL_MIC3 | ES7210_SEL_MIC4;
     const audio_codec_if_t* es7210_dev = es7210_codec_new(&es7210_cfg);
     BSP_NULL_CHECK(es7210_dev, NULL);
 
@@ -1179,7 +1179,7 @@ esp_err_t bsp_display_new_with_handles(const bsp_display_config_t* config, bsp_l
     esp_lcd_dsi_bus_config_t bus_config   = {
           .bus_id             = 0,
           .num_data_lanes     = BSP_LCD_MIPI_DSI_LANE_NUM,
-          .phy_clk_src        = MIPI_DSI_PHY_CLK_SRC_DEFAULT,
+          .phy_clk_src        = MIPI_DSI_PHY_PLLREF_CLK_SRC_DEFAULT,
           .lane_bit_rate_mbps = BSP_LCD_MIPI_DSI_LANE_BITRATE_MBPS,
     };
     ESP_RETURN_ON_ERROR(esp_lcd_new_dsi_bus(&bus_config, &mipi_dsi_bus), TAG, "New DSI bus init failed");
@@ -1198,7 +1198,8 @@ esp_err_t bsp_display_new_with_handles(const bsp_display_config_t* config, bsp_l
         .virtual_channel    = 0,
         .dpi_clk_src        = MIPI_DSI_DPI_CLK_SRC_DEFAULT,
         .dpi_clock_freq_mhz = 60,  // 720*1280 RGB24 60Hz RGB24 // 80,
-        .pixel_format       = LCD_COLOR_PIXEL_FORMAT_RGB565,
+        .in_color_format    = LCD_COLOR_FMT_RGB565,
+        .out_color_format   = LCD_COLOR_FMT_RGB565,
         .num_fbs            = 1,
         .video_timing =
             {
@@ -1211,7 +1212,6 @@ esp_err_t bsp_display_new_with_handles(const bsp_display_config_t* config, bsp_l
                 .vsync_pulse_width = 4,
                 .vsync_front_porch = 20,
             },
-        .flags.use_dma2d = true,
     };
 
     ili9881c_vendor_config_t vendor_config = {
@@ -1233,6 +1233,7 @@ esp_err_t bsp_display_new_with_handles(const bsp_display_config_t* config, bsp_l
         .vendor_config  = &vendor_config,
     };
     ESP_ERROR_CHECK(esp_lcd_new_panel_ili9881c(io, &lcd_dev_config, &disp_panel));
+    ESP_ERROR_CHECK(esp_lcd_dpi_panel_enable_dma2d(disp_panel));
     ESP_ERROR_CHECK(esp_lcd_panel_reset(disp_panel));
     ESP_ERROR_CHECK(esp_lcd_panel_init(disp_panel));
     //  ESP_ERROR_CHECK(esp_lcd_panel_mirror(disp_panel, false, true));
@@ -1360,7 +1361,7 @@ esp_err_t bsp_display_new_with_handles_to_st7123(const bsp_display_config_t* con
     esp_lcd_dsi_bus_config_t bus_config = {
         .bus_id             = 0,
         .num_data_lanes     = 2,  // ST7123/ST7121 uses 2 data lanes
-        .phy_clk_src        = MIPI_DSI_PHY_CLK_SRC_DEFAULT,
+        .phy_clk_src        = MIPI_DSI_PHY_PLLREF_CLK_SRC_DEFAULT,
         .lane_bit_rate_mbps = 965,  // ST7123/ST7121 lane bitrate
     };
     ESP_RETURN_ON_ERROR(esp_lcd_new_dsi_bus(&bus_config, &mipi_dsi_bus), TAG, "New DSI bus init failed");
@@ -1379,7 +1380,8 @@ esp_err_t bsp_display_new_with_handles_to_st7123(const bsp_display_config_t* con
         .virtual_channel    = 0,
         .dpi_clk_src        = MIPI_DSI_DPI_CLK_SRC_DEFAULT,
         .dpi_clock_freq_mhz = 70,  // DPI clock frequency
-        .pixel_format       = LCD_COLOR_PIXEL_FORMAT_RGB565,
+        .in_color_format    = LCD_COLOR_FMT_RGB565,
+        .out_color_format   = is_st7121 ? LCD_COLOR_FMT_RGB565 : LCD_COLOR_FMT_RGB888,
         .num_fbs            = 1,
         .video_timing =
             {
@@ -1391,10 +1393,6 @@ esp_err_t bsp_display_new_with_handles_to_st7123(const bsp_display_config_t* con
                 .vsync_pulse_width = is_st7121 ? 20 : 2,
                 .vsync_back_porch  = is_st7121 ? 24 : 8,
                 .vsync_front_porch = is_st7121 ? 200 : 220,
-            },
-        .flags =
-            {
-                .use_dma2d = true,
             },
     };
 
@@ -1427,6 +1425,7 @@ esp_err_t bsp_display_new_with_handles_to_st7123(const bsp_display_config_t* con
                           "New LCD panel ST7123 failed");
     }
 
+    ESP_GOTO_ON_ERROR(esp_lcd_dpi_panel_enable_dma2d(disp_panel), err, TAG, "Enable LCD DMA2D failed");
     ESP_GOTO_ON_ERROR(esp_lcd_panel_reset(disp_panel), err, TAG, "LCD panel reset failed");
     ESP_GOTO_ON_ERROR(esp_lcd_panel_init(disp_panel), err, TAG, "LCD panel init failed");
     ESP_GOTO_ON_ERROR(esp_lcd_panel_disp_on_off(disp_panel, true), err, TAG, "LCD panel display on failed");
@@ -1626,8 +1625,7 @@ static lv_indev_t* bsp_display_indev_init_to_st7123(lv_display_t* disp)
     };
     tp_io_config.scl_speed_hz = CONFIG_BSP_I2C_CLK_SPEED_HZ;
 
-    ret = esp_lcd_new_panel_io_i2c_v2(bsp_i2c_get_handle(), &tp_io_config, &tp_io_handle);
-    // ret = esp_lcd_new_panel_io_i2c(bsp_i2c_get_handle(), &tp_io_config, &tp_io_handle);
+    ret = esp_lcd_new_panel_io_i2c(bsp_i2c_get_handle(), &tp_io_config, &tp_io_handle);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to create ST7123 touch I2C IO: %s", esp_err_to_name(ret));
         return NULL;

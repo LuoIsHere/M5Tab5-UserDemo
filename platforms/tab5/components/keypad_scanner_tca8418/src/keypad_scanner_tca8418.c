@@ -308,7 +308,7 @@ const char key_value_map[81] = {
     ' ',  // TAB
     ' ',  // NONE
     ' ',  // NONE
-    '4', '￥', '/', 'g', 'o', 'w',
+    '4', '$', '/', 'g', 'o', 'w',
     ' ',  // KANA
     ' ',  // STOP
     '<',  // <-

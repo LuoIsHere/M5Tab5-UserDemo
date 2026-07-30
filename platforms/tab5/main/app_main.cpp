@@ -7,8 +7,11 @@
 #include <app.h>
 #include <hal/hal.h>
 #include <memory>
+#include <esp_log.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+
+static const char *TAG = "tab5x_userdemo";
 
 extern "C" void app_main(void)
 {
@@ -22,6 +25,7 @@ extern "C" void app_main(void)
 
     // 应用层启动
     app::Init(callback);
+    ESP_LOGI(TAG, "TAB5X_DISPLAY_READY");
     while (!app::IsDone()) {
         app::Update();
         vTaskDelay(1);

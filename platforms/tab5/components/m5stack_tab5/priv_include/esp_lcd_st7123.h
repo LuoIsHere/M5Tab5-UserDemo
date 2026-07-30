@@ -20,7 +20,6 @@
  #ifdef __cplusplus
  extern "C" {
  #endif
- 
  /**
   * @brief LCD panel initialization commands.
   *
@@ -75,7 +74,7 @@
      {                                                    \
          .bus_id = 0,                                     \
          .num_data_lanes = 2,                             \
-         .phy_clk_src = MIPI_DSI_PHY_CLK_SRC_DEFAULT,     \
+         .phy_clk_src = MIPI_DSI_PHY_PLLREF_CLK_SRC_DEFAULT, \
          .lane_bit_rate_mbps = 1000,                      \
      }
  
@@ -119,8 +118,7 @@
          .flags.use_dma2d = true,                           \
      }
  #endif
- 
+
  #ifdef __cplusplus
  }
  #endif
- 

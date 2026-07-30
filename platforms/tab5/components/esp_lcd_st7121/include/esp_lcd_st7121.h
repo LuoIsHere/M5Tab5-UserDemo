@@ -15,9 +15,15 @@
 #include "esp_idf_version.h"
 
 /* Version macros */
+#ifndef ESP_LCD_ST7121_VER_MAJOR
 #define ESP_LCD_ST7121_VER_MAJOR (1)
+#endif
+#ifndef ESP_LCD_ST7121_VER_MINOR
 #define ESP_LCD_ST7121_VER_MINOR (0)
+#endif
+#ifndef ESP_LCD_ST7121_VER_PATCH
 #define ESP_LCD_ST7121_VER_PATCH (0)
+#endif
 
 #ifdef __cplusplus
 extern "C" {
