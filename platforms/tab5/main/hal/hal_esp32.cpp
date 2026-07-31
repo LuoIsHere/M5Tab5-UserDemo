@@ -243,6 +243,11 @@ void HalEsp32::clearRtcIrq()
     rx8130.disableIrq();
 }
 
+void HalEsp32::getRtcTime(tm* time)
+{
+    rx8130.getTime(time);
+}
+
 void HalEsp32::setRtcTime(tm time)
 {
     mclog::tagInfo(_tag, "set rtc time to {}/{}/{} {:02d}:{:02d}:{:02d}", time.tm_year + 1900, time.tm_mon + 1,

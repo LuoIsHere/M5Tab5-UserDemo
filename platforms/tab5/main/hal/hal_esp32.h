@@ -39,6 +39,7 @@ public:
     void clearImuIrq() override;
 
     void clearRtcIrq() override;
+    void getRtcTime(tm* time) override;
     void setRtcTime(tm time) override;
 
     void setChargeQcEnable(bool enable) override;
