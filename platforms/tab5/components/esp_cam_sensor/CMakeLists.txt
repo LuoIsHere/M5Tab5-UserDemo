@@ -1,7 +1,7 @@
 set(srcs "src/esp_cam_sensor.c")
 
 set(include_dirs "include")
-set(requires "driver" "esp_sccb_intf")
+set(requires "esp_driver_gpio" "esp_sccb_intf")
 
 if(CONFIG_CAMERA_OV2640)
     list(APPEND srcs "sensors/ov2640/ov2640.c")

@@ -11,6 +11,7 @@
 #include "esp_log.h"
 #include "esp_attr.h"
 #include "esp_check.h"
+#include "esp_idf_version.h"
 
 #include "esp_ldo_regulator.h"
 #include "esp_cam_ctlr.h"
@@ -317,6 +318,19 @@ static esp_err_t csi_video_start(struct esp_video *video, uint32_t type)
         .bk_buffer_dis = true,
 #endif
     };
+
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(6, 0, 0)
+    /*
+     * IDF 6.x CSI format conversion no longer accepts RAW input formats.
+     * The ISP performs RAW-to-RGB conversion, so configure the CSI bridge
+     * with the ISP output format to keep the bridge in bypass mode.
+     */
+    if (!csi_video->state.bypass_isp) {
+        csi_config.input_data_color_type = csi_video->state.out_color;
+        csi_config.output_data_color_type = csi_video->state.out_color;
+    }
+#endif
+
     ESP_RETURN_ON_ERROR(esp_cam_new_csi_ctlr(&csi_config, &csi_video->cam_ctrl_handle), TAG, "failed to new CSI");
 
     esp_cam_ctlr_evt_cbs_t cam_ctrl_cbs = {.on_get_new_trans  = csi_video_on_get_new_trans,

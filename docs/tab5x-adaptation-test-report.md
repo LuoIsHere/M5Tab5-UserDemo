@@ -2,9 +2,17 @@
 
 ## 1. 测试结论
 
-Tab5X（ESP32-P4 ECO7，实测芯片版本 v3.2）已完成基于 M5Tab5-UserDemo 的 `release/v6.1` 适配。工程可完整编译，已烧录版本能够稳定启动，显示异常已修复，ESP32-C6 SDIO/ESP-Hosted/Wi-Fi AP 链路正常。
+Tab5X（ESP32-P4 ECO7，实测芯片版本 v3.2）已完成基于
+M5Tab5-UserDemo 的 ESP-IDF `release/v6.1` 适配测试。
 
-本次结论为**基础适配通过，受夹具限制的外设功能闭环待人工补测**。显示、启动、PSRAM、内部 I2C、Wi-Fi 协处理器链路已有硬件证据；音频、IMU、INA226、RTC、USB Host、RS485 和摄像头时钟仅确认驱动/接口初始化，未将缺少执行器或外设的项目标记为功能通过。
+最终固件可稳定启动，显示、PSRAM、ESP32-C6 SDIO/ESP-Hosted、Wi-Fi
+AP、音频驱动数据链路和 SC202CS 摄像头采集均通过。最终串口会话连续
+完成 3 轮音频和摄像头 smoke 测试，无失败标记、panic、异常重启或串口
+丢包。
+
+本次结论为**Tab5X ECO7 基础适配及音频/摄像头驱动闭环通过**。声学质量、
+摄像头成像质量、触摸坐标、外接 USB/RS485/SD 卡和电池充放电等需要专用
+执行器或量测设备的项目未纳入通过范围。
 
 ## 2. 环境与版本
 
@@ -12,113 +20,129 @@ Tab5X（ESP32-P4 ECO7，实测芯片版本 v3.2）已完成基于 M5Tab5-UserDem
 | --- | --- |
 | 源仓库 | `https://github.com/m5stack/M5Tab5-UserDemo` |
 | 适配分支 | `feature/tab5x` |
-| 基线提交 | `68b19d3` |
+| 已提交适配基线 | `b9d5302 feat(tab5): support Tab5X ECO7 on ESP-IDF 6.1` |
 | ESP-IDF | `release/v6.1` |
 | ESP-IDF 提交 | `14f663f003eb8fd9a688c301a412a9540d29dacf` |
-| 目标芯片 | ESP32-P4，最低版本 v3.1，最高版本 v3.99 |
+| 编译芯片范围 | ESP32-P4 v3.1 至 v3.99 |
 | 实测芯片 | ESP32-P4 v3.2（ECO7） |
 | 远端构建机 | `loki@192.168.199.128` |
 | 测试中心 | `http://192.168.20.69:8000` |
 | 测试位 | `80f1b2d14b33`（Tab5X） |
-| 测试日期 | 2026-07-30（Asia/Shanghai） |
+| 夹具 ISP 接线 | TX=G12、RX=G13、BOOT=G10、RESET/EN=G11 |
+| DUT 烧录速率 | `921600` |
+| DUT 串口监控速率 | `115200` |
+| 测试日期 | 2026-07-31（Asia/Shanghai） |
 
 关键组件版本：
 
 - `espressif/esp_wifi_remote 1.6.3`
 - `espressif/esp_hosted 2.12.11`
 - `espressif/esp_codec_dev 1.5.5`
-- `espressif/led_strip 3.0.3`
-- `lvgl/lvgl 9.5.0`（组件锁文件）；构建实际选用仓库 `dependencies/lvgl`，日志版本为 9.2.2
+- `lvgl/lvgl 9.5.0`（组件锁文件；构建使用仓库内依赖）
+- vendored `esp_video 0.7.0`，增加 IDF 6.x CSI 兼容修正
 
 ## 3. 适配内容
 
-- 增加 ESP32-P4 v3.1 及以上芯片版本约束，覆盖 Tab5X ECO7。
-- 适配 ESP-IDF 6.1 的 MIPI DSI、DMA2D、PPA、摄像头、I2C、温度传感器和音频接口变化。
-- 更新 ESP-Hosted/esp_wifi_remote，并配置 Tab5 ESP32-C6 的 SDIO2 引脚、4-bit 总线和高有效复位极性。
-- 修复 Wi-Fi 初始化阶段 `sdmmc_card_init failed`、ESP-Hosted 重配失败和循环重启问题。
-- 动态识别 ST7121/ST7123；ST7121 使用 RGB565 输出，ST7123 保持 RGB888 输出，修复 Tab5X 下半屏倾斜及灰屏。
-- 增加 `TAB5X_DISPLAY_READY` 启动标记，便于串口自动验证。
-- 更新 IDF 6.1 所需组件依赖和本地组件清单。
+- 配置 ESP32-P4 v3.1 及以上芯片版本范围，覆盖 Tab5X ECO7。
+- 适配 ESP-IDF 6.1 的 MIPI DSI、DMA2D、PPA、I2C、温度传感器和音频接口。
+- 更新 ESP-Hosted/esp_wifi_remote，并配置 ESP32-C6 的 SDIO2 4-bit 总线。
+- 修复 `sdmmc_card_init failed`、ESP-Hosted 重配失败和循环重启。
+- 动态识别 ST7121/ST7123；ST7121 使用 RGB565，修复下半屏倾斜和灰屏。
+- 启用 Tab5/Tab5X 的 SC202CS MIPI-CSI RAW8 1280x720 传感器配置。
+- 适配 IDF 6.x CSI/ISP 格式处理，避免 CSI 桥接器执行不支持的
+  `RAW8 -> RGB565` 转换。
+- 将摄像头任务固定到 Core 0，使其与音频初始化建立的 DW-GDMA 私有中断组
+  保持同核，修复 DMA 中断分配失败。
+- 摄像头初始化失败改为显式结束任务，避免失败路径跳转空地址造成
+  `MEPC=0` panic。
+- 增加显示、音频、摄像头首帧和 smoke 完成串口标记。
 
-显示修复的关键配置：
+## 4. 最终固件与烧录
 
-```c
-.out_color_format = is_st7121 ? LCD_COLOR_FMT_RGB565 : LCD_COLOR_FMT_RGB888,
-```
-
-## 4. 构建与固件
-
-### 4.1 已完成硬件验证的固件
-
-| 项目 | 内容 |
-| --- | --- |
-| 测试中心固件 ID | `fw-2523726e012c4927` |
-| 合并镜像大小 | 5,845,776 字节 |
-| SHA-256 | `be03b9a599379a07d35da13eb44ac17196c71ec2efd7318af67888351400d635` |
-| 显示证据帧 | `cap-8cbd04c843934df7` |
-
-### 4.2 最终提交源码构建校验
-
-最终整理后的源码在 ESP-IDF `release/v6.1` 上重新执行完整构建和 `merge-bin`，构建通过。根据用户“取消重烧”的要求，该镜像未再次烧录。
+### 4.1 DUT 测试镜像
 
 | 项目 | 内容 |
 | --- | --- |
-| 应用镜像 | `/dev/shm/tab5x-build-final-20260730/m5stack_tab5.bin` |
-| 应用镜像大小 | 5,780,240 字节（`0x583310`） |
-| 应用镜像 SHA-256 | `03276ae29657ecd4e70ce04f77b3980c55ab6a5e0de1a6c28b62d310f258468a` |
-| 合并镜像 | `/dev/shm/tab5x-final-merged-20260730.bin` |
-| 合并镜像大小 | 5,845,776 字节 |
-| 合并镜像 SHA-256 | `0f2f9abb68841c6fb54d949f73957c0d1ea3eba02626ebdc5064a4f0ddcc39ee` |
-| 分区余量 | 最小应用分区剩余 45% |
+| 构建目录 | `platforms/tab5/build.tab5x-smoke-eco7-camera` |
+| 应用镜像大小 | 5,790,160 字节（`0x5859d0`） |
+| 合并镜像大小 | 5,855,696 字节（`0x5959d0`） |
+| 合并镜像 SHA-256 | `4691805e99ee4bb99e2db42aca9f5fd8660d298b99fe64be15f2df2e89d06dd3` |
+| 最小应用分区余量 | 45% |
+
+### 4.2 高速烧录载体
+
+旧夹具固件 `0.2.0` 接受高波特率参数但实际写入速度未提高，因此本次使用
+一次性夹具 OTA 包。该包固定以 `921600` 烧录 DUT，完成 MD5 校验并复位
+DUT 后自动回滚夹具至 `0.2.0`。
+
+| 项目 | 内容 |
+| --- | --- |
+| 夹具资产 | `fw-3ff16c14a784405c` |
+| 一次性夹具版本 | `0.2.13-tab5x-cam-oneshot` |
+| 夹具包 SHA-256 | `66c2cff6cbe74674a2d69e312b40e5c886d65324708dc7b67f7a0209165423ae` |
+| 夹具包内嵌 DUT SHA-256 | `4691805e99ee4bb99e2db42aca9f5fd8660d298b99fe64be15f2df2e89d06dd3` |
+| rollout | `rollout-1fcb707d3e8f45ec` |
+| ROM 连接预检 | 通过，ESP32-P4、16 MB Flash、MAC `E8:F6:0A:E7:BD:09` |
+| 观测结果 | 夹具离线完成写入和校验后，以新 boot ID `boot-80f1b2d14b33-9ee17593` 回滚上线 |
+
+测试中心的 rollout 可能保持 `rebooting`，因为一次性固件主动回滚到
+`0.2.0`，不会以 rollout 目标版本持续注册；DUT 烧录结果以新 boot ID、
+后续复位启动日志和 smoke 标记为准。
 
 ## 5. 硬件测试结果
 
 | 测试项 | 结果 | 证据/说明 |
 | --- | --- | --- |
-| 编译与链接 | 通过 | ESP-IDF 6.1 完整构建 1940 个目标，镜像尺寸检查通过 |
-| 烧录与镜像完整性 | 通过 | `fw-2523726e012c4927` 已烧录并运行；后续按要求取消重烧 |
-| 冷启动/复位稳定性 | 通过 | 三次独立启动窗口均无 panic、abort 或重复启动；命令 `cmd-2d040c49b1b4447c`、`cmd-aa4c172a232c4db3`、`cmd-6458f5826cdb4d4b` |
-| ESP32-P4 ECO7 识别 | 通过 | 启动日志：最低 v3.1、最高 v3.99、实测 v3.2 |
-| PSRAM | 通过 | 识别 32 MB、200 MHz，`SPI SRAM memory test OK` |
-| 显示 | 通过 | ST7121 检测成功，完整 UI 显示至屏幕底部；原下半屏倾斜/灰屏消失，用户已确认 |
-| 复位后显示保持 | 通过 | 最终证据帧 `cap-66525fbdc3b5456d`，SHA-256 `95a2cdb022de8b8c29fa036bb95808c3ec02d4a6d8a33d54271249d5a3f4cf3c` |
-| 触摸控制器初始化 | 通过 | ST7121 触摸固件版本 1，分辨率 720x1280，最多 10 点，LVGL 输入设备创建成功 |
-| 触摸坐标功能 | 未执行 | 夹具无触摸执行器，未验证坐标、边缘和多点触控 |
-| 内部 I2C | 通过 | 扫描到 `0x00, 0x10, 0x28, 0x32, 0x36, 0x40, 0x41, 0x43, 0x44, 0x55, 0x68` |
-| ESP32-C6 SDIO | 通过 | 4-bit/40 MHz，`Card init success`，识别 `esp32c6`，Transport active |
-| Wi-Fi AP 协议栈 | 通过 | `M5Tab5-UserDemo-WiFi` 启动，DHCP 地址 `192.168.4.1` |
-| Wi-Fi RF/HTTP | 未执行 | 测试端 WLAN 软件关闭，未完成终端关联、吞吐和 HTTP 访问 |
-| ES7210/ES8388 音频接口 | 初始化通过 | ES7210 TDM、ES8388 codec 均打开成功 |
-| 麦克风/扬声器/耳机 | 未执行 | 无声学采集、播放和耳机插拔执行器，未做信噪比、声道和插拔闭环 |
-| BMI270 IMU | 初始化通过 | ODR/量程设置成功，传感器启用 |
-| INA226 | 初始化通过 | 总线电压读数约 1.92-1.94 V |
-| RX8130 RTC | 初始化通过 | 芯片可访问并读取；日期内容异常，见已知问题 |
-| USB Host/HID | 初始化通过 | USB Host 安装成功，HID 任务进入等待设备状态 |
-| USB HID 枚举 | 未执行 | 夹具未连接键盘/鼠标等 HID 外设 |
+| 编译与链接 | 通过 | ESP-IDF 6.1 完整构建及 `merge-bin` 通过 |
+| 高速烧录与镜像关系 | 通过 | 资产元数据、构建 SHA 和内嵌 DUT SHA 一致；固定 `921600` |
+| 冷启动/EN 复位 | 通过 | 最终会话 `ser-b0da773acfb9b96a`，无 panic、重启或丢包 |
+| ESP32-P4 ECO7 识别 | 通过 | 最低 v3.1、最高 v3.99、实测 v3.2 |
+| PSRAM | 通过 | 32 MB、200 MHz，内存测试通过 |
+| 显示 | 通过 | ST7121、720x1280、RGB565；整屏点亮，未见下半屏灰色/倾斜分区 |
+| 显示图像证据 | 通过（曝光偏高） | 帧 `cap-497ddb83c4864291`，SHA `f2f06344dc2e388e9a11575682d05b7d8c6f2827fbb7f455f7505a19eaad9b92` |
+| 触摸控制器初始化 | 通过 | ST7121 触摸固件版本 1，最多 10 点 |
+| 触摸坐标功能 | 未执行 | 夹具无触摸执行器 |
+| 内部 I2C | 通过 | 扫描到 `0x00,0x10,0x28,0x32,0x36,0x40,0x41,0x43,0x44,0x55,0x68` |
+| ESP32-C6 SDIO | 通过 | 4-bit/40 MHz，Card init success，Transport active |
+| Wi-Fi AP 协议栈 | 通过 | `M5Tab5-UserDemo-WiFi` 和 DHCP 服务启动 |
+| Wi-Fi RF/HTTP | 未执行 | 未做终端关联、吞吐和 HTTP 访问 |
+| 音频驱动数据闭环 | 通过 | 连续 3 轮；每轮读取 1,152,000 字节、写入 576,000 字节 |
+| 音频声学质量 | 未执行 | 未用外部麦克风/声级计评估响度、失真、声道和信噪比 |
+| SC202CS 摄像头 | 通过 | PID `0xeb52`，RAW8 1280x720，首帧 1,843,200 字节 |
+| 摄像头持续采集 | 通过 | 连续 3 轮分别采集 134、137、136 帧，均出现 PASS |
+| 摄像头成像质量 | 未执行 | smoke 仅验证帧采集和 PPA 数据处理 |
+| BMI270 IMU | 初始化通过 | ODR/量程设置和传感器启用成功 |
+| INA226 | 初始化通过 | 可读取总线电压 |
+| RX8130 RTC | 初始化通过 | 芯片可访问；时间内容见已知问题 |
+| USB Host/HID | 初始化通过 | USB Host 安装，HID 等待设备 |
+| USB HID 枚举 | 未执行 | 未连接可控 HID 外设 |
 | RS485 | 初始化通过 | UART 引脚、模式和驱动安装成功 |
-| RS485 回环 | 未执行 | 无回环夹具/对端设备 |
-| 摄像头时钟/接口 | 初始化通过 | 摄像头 24 MHz 时钟初始化；未采集 DUT 摄像头画面 |
-| SD 卡文件系统 | 未执行 | 测试位未提供可控 SD 卡插拔和读写介质 |
+| RS485 回环 | 未执行 | 无回环夹具或对端 |
+| SD 卡文件系统 | 未执行 | 无可控 SD 卡介质 |
 | GPIO 电气测试 | 未执行 | 无 GPIO 回环/量测夹具 |
-| 电池、充电和断电恢复 | 未执行 | 未做电池继电器闭环、充电曲线和掉电保持测试 |
+| 电池、充电和掉电恢复 | 未执行 | 未做充放电曲线和断电保持测试 |
 
-新增复位串口会话：
+最终串口会话统计：
 
-- `ser-2a639c72db7e9a10`：首次独立复位会话，持续观察约 50 秒，无 panic 或重复启动。
-- `ser-1fb81aff980fb8af`：13,243 字节、24 个数据块、0 丢包。
-- `ser-db3500f9cd142d62`：12,479 字节、20 个数据块、0 丢包。
-
-两次会话均出现 `TAB5X_DISPLAY_READY`、ESP32-C6 SDIO 建链和 Wi-Fi AP 启动标记，未出现 panic、abort、`sdmmc_card_init failed` 或循环重启。
+- `TAB5X_DISPLAY_READY`：1 次。
+- `TAB5X_AUDIO_DRIVER_TEST_PASS`：3 次。
+- `TAB5X_CAMERA_DRIVER_FRAME_OK`：3 次。
+- `TAB5X_CAMERA_DRIVER_TEST_PASS`：3 次。
+- `TAB5X_DRIVER_SMOKE_DONE`：3 次。
+- `TAB5X_*FAIL`、Guru Meditation、panic、Rebooting：0 次。
+- 串口数据：17,436 字节，丢包 0。
 
 ## 6. 已知问题与风险
 
-1. 启动日志出现 `ledc: GPIO 22 is not usable, maybe conflict with others`；当前背光和显示正常，但应继续确认 GPIO22 资源归属。
-2. 音频启动时出现 `Mode 1 conflict sample_rate 44100 with 48000`；codec 随后重新打开且应用继续运行，仍需做真实音频闭环。
-3. RTC 读到 `2010-10-00`，日期日字段无效；需要在生产初始化或用户固件中校验 RTC 内容。
-4. `esp_codec_dev 1.5.5` 已被 Espressif 组件仓库标记为 yanked（原因：build failure），本项目当前可在 IDF 6.1 构建并初始化，但建议后续评估可替代版本。
-5. `sdkconfig.defaults` 中若干旧 LVGL/Brookesia Kconfig 符号在 IDF 6.1 下不再识别；不影响本次构建，但建议后续清理配置。
-6. 测试中心固件 0.2.0 未采用任务请求中的高烧录波特率参数，5.8 MB 镜像烧录约 584 秒。后续如需再次烧录，应使用 ACM2 和 921600 波特率，或先升级夹具固件；本轮未再烧录。
+1. 启动日志出现 `ledc: GPIO 22 is not usable, maybe conflict with others`；当前背光和显示正常，仍应确认 GPIO22 资源归属。
+2. 启动动画音频出现一次 `Mode 1 conflict sample_rate 44100 with 48000`；之后 48 kHz 录放数据闭环连续通过。
+3. RTC 内容为历史测试时间，量产初始化时应校验有效日期和时间。
+4. `esp_codec_dev 1.5.5` 在组件仓库曾被标记为 yanked；当前工程可构建并连续完成录放数据测试，后续仍建议评估升级。
+5. fixture USB 摄像头画面曝光偏高，只能确认整屏区域无明显灰屏分区，不能代替显示色彩和坏点量测。
+6. 一次性高速夹具包属于测试辅助产物，不应作为夹具常驻生产固件。
 
 ## 7. 验收建议
 
-当前版本可作为 Tab5X ECO7 基础适配版本提交。量产或发布前仍应在人工工位补齐触摸坐标、音频声学、耳机、DUT 摄像头、SD 卡、USB HID、RS485 回环、GPIO、电池/充电以及 Wi-Fi RF/HTTP 测试，并处理或接受第 6 节所列风险。
+当前版本可作为 Tab5X ECO7 的程序适配版本提交。量产或发布前建议在人工工位
+补齐触摸坐标、音频声学、摄像头成像质量、SD 卡、USB HID、RS485 回环、
+GPIO、电池/充电以及 Wi-Fi RF/HTTP 测试，并处理或接受第 6 节风险。

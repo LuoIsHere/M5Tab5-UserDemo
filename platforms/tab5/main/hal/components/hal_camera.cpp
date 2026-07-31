@@ -44,6 +44,12 @@ static QueueHandle_t queue_camera_ctrl = NULL;
 static bool is_camera_capturing = false;
 static std::mutex camera_mutex;
 
+static void finish_camera_capture_task()
+{
+    std::lock_guard<std::mutex> lock(camera_mutex);
+    is_camera_capturing = false;
+}
+
 static const char* TAG = "camera";
 
 #define EXAMPLE_VIDEO_BUFFER_COUNT 2
@@ -93,7 +99,7 @@ int app_video_open(const char* dev, example_fmt_t init_fmt)
 
     int fd = open(dev, O_RDONLY);
     if (fd < 0) {
-        ESP_LOGE(TAG, "Open video failed");
+        ESP_LOGE(TAG, "Open %s failed: errno=%d (%s)", dev, errno, strerror(errno));
         return -1;
     }
 
@@ -239,17 +245,33 @@ void app_camera_display(void* arg)
     };
 
     if (!cam_is_initial) {
-        camera = (cam_t*)malloc(sizeof(cam_t));
         printf("\n============= video init ==============\n");
+        esp_err_t ret = esp_video_init(&cam_config);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "TAB5X_CAMERA_DRIVER_TEST_FAIL init=%s", esp_err_to_name(ret));
+            finish_camera_capture_task();
+            vTaskDelete(NULL);
+            return;
+        }
+        // The video device remains registered even if opening or streaming fails.
         cam_is_initial = true;
-        ESP_ERROR_CHECK(esp_video_init(&cam_config));
         printf("\n============= video open ==============\n");
         int video_cam_fd = app_video_open(CAM_DEV_PATH, EXAMPLE_VIDEO_FMT_RGB565);
         if (video_cam_fd < 0) {
-            ESP_LOGE(TAG, "video cam open failed");
+            ESP_LOGE(TAG, "TAB5X_CAMERA_DRIVER_TEST_FAIL open=%s", CAM_DEV_PATH);
+            finish_camera_capture_task();
+            vTaskDelete(NULL);
             return;
         }
-        ESP_ERROR_CHECK(new_cam(video_cam_fd, &camera));
+        ret = new_cam(video_cam_fd, &camera);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "TAB5X_CAMERA_DRIVER_TEST_FAIL setup=%s", esp_err_to_name(ret));
+            close(video_cam_fd);
+            camera = NULL;
+            finish_camera_capture_task();
+            vTaskDelete(NULL);
+            return;
+        }
     }
 
     struct v4l2_buffer buf;
@@ -285,7 +307,8 @@ void app_camera_display(void* arg)
     };
     ESP_ERROR_CHECK(ppa_register_client(&ppa_srm_config, &ppa_srm_handle));
 
-    int task_control = 0;
+    int task_control     = 0;
+    uint32_t frame_count = 0;
     while (1) {
         memset(&buf, 0, sizeof(buf));
         buf.type   = V4L2_BUF_TYPE_VIDEO_CAPTURE;
@@ -325,7 +348,11 @@ void app_camera_display(void* arg)
                                             .alpha_fix_val     = 0,
                                             .mode              = PPA_TRANS_MODE_BLOCKING,
                                             .user_data         = NULL};
-        ppa_do_scale_rotate_mirror(ppa_srm_handle, &srm_config);
+        esp_err_t ppa_ret = ppa_do_scale_rotate_mirror(ppa_srm_handle, &srm_config);
+        if (ppa_ret != ESP_OK) {
+            ESP_LOGE(TAG, "PPA processing failed: %s", esp_err_to_name(ppa_ret));
+            break;
+        }
 
         // auto detect_results = human_face_detector->run(dl_img); // format: hwc
 
@@ -335,6 +362,13 @@ void app_camera_display(void* arg)
 
         if (ioctl(camera->fd, VIDIOC_QBUF, &buf) != 0) {
             ESP_LOGE(TAG, "failed to free video frame");
+            break;
+        }
+
+        frame_count++;
+        if (frame_count == 1) {
+            ESP_LOGI(TAG, "TAB5X_CAMERA_DRIVER_FRAME_OK index=%u bytes=%u", static_cast<unsigned>(buf.index),
+                     static_cast<unsigned>(buf.bytesused));
         }
 
         if (xQueueReceive(queue_camera_ctrl, &task_control, 0) == pdPASS) {
@@ -353,6 +387,8 @@ void app_camera_display(void* arg)
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 
+    ESP_LOGI(TAG, "TAB5X_CAMERA_DRIVER_TEST_%s frames=%u", frame_count > 0 ? "PASS" : "FAIL",
+             static_cast<unsigned>(frame_count));
     ESP_LOGI(TAG, "task exit");
     ppa_unregister_client(ppa_srm_handle);
     // delete human_face_detector;
@@ -366,9 +402,7 @@ void app_camera_display(void* arg)
     }
     // close(camera->fd);
 
-    camera_mutex.lock();
-    is_camera_capturing = false;
-    camera_mutex.unlock();
+    finish_camera_capture_task();
 
     vTaskDelete(NULL);
 }
@@ -381,11 +415,13 @@ void HalEsp32::startCameraCapture(lv_obj_t* imgCanvas)
 
     queue_camera_ctrl = xQueueCreate(10, sizeof(int));
     if (queue_camera_ctrl == NULL) {
-        ESP_LOGD(TAG, "Failed to create semaphore\n");
+        ESP_LOGE(TAG, "TAB5X_CAMERA_DRIVER_TEST_FAIL control_queue");
+        return;
     }
 
     is_camera_capturing = true;
-    xTaskCreatePinnedToCore(app_camera_display, "cam", 8 * 1024, NULL, 5, NULL, 1);
+    // DW-GDMA channels share one private interrupt group, first allocated on Core 0 by audio.
+    xTaskCreatePinnedToCore(app_camera_display, "cam", 8 * 1024, NULL, 5, NULL, 0);
 }
 
 void HalEsp32::stopCameraCapture()

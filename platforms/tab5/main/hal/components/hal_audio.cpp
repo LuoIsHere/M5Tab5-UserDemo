@@ -14,6 +14,8 @@
 #include <thread>
 #include <mutex>
 #include <audio_player.h>
+#include <esp_err.h>
+#include <esp_log.h>
 
 static const char* TAG = "audio";
 
@@ -143,6 +145,7 @@ static void _rec_test_task(void* param)
 
     size_t total_read_samples = 0;
     size_t total_read_bytes   = 0;
+    esp_err_t read_ret        = ESP_OK;
 
     bsp_codec_config_t* codec_handle = bsp_get_codec_handle();
     codec_handle->set_in_gain(240);
@@ -159,7 +162,13 @@ static void _rec_test_task(void* param)
         }
 
         size_t bytes_read = 0;
-        codec_handle->i2s_read((char*)(read_buf + total_read_samples), bytes_to_read, &bytes_read, portMAX_DELAY);
+        read_ret = codec_handle->i2s_read((char*)(read_buf + total_read_samples), bytes_to_read, &bytes_read,
+                                          portMAX_DELAY);
+        if (read_ret != ESP_OK || bytes_read == 0) {
+            ESP_LOGE(TAG, "record read failed: ret=%s, bytes=%u", esp_err_to_name(read_ret),
+                     static_cast<unsigned>(bytes_read));
+            break;
+        }
 
         total_read_samples += bytes_read / sizeof(int16_t);
         total_read_bytes += bytes_read;
@@ -167,7 +176,18 @@ static void _rec_test_task(void* param)
         vTaskDelay(pdMS_TO_TICKS(5));
     }
 
-    mclog::tagInfo(TAG, "record done");
+    const size_t expected_read_bytes = total_samples * sizeof(int16_t);
+    mclog::tagInfo(TAG, "record done: {}/{} bytes", total_read_bytes, expected_read_bytes);
+
+    if (read_ret != ESP_OK || total_read_bytes != expected_read_bytes) {
+        ESP_LOGE(TAG, "TAB5X_AUDIO_DRIVER_TEST_FAIL stage=record ret=%s bytes=%u/%u", esp_err_to_name(read_ret),
+                 static_cast<unsigned>(total_read_bytes), static_cast<unsigned>(expected_read_bytes));
+        _rec_test_data.mutex.lock();
+        _rec_test_data.state = hal::HalBase::MIC_TEST_IDLE;
+        _rec_test_data.mutex.unlock();
+        vTaskDelete(NULL);
+        return;
+    }
 
     // Create audio data  [MIC-L, AEC, MIC-R, MIC-HP]
     int num_frames = audio_buffer_size / 2;  // 每帧一组 stereo 输出
@@ -190,12 +210,22 @@ static void _rec_test_task(void* param)
 
     size_t bytes_written = 0;
     codec_handle->set_volume(_current_speaker_volume);
-    codec_handle->i2s_reconfig_clk_fn(48000, 16, I2S_SLOT_MODE_STEREO);
+    esp_err_t clk_ret = codec_handle->i2s_reconfig_clk_fn(48000, 16, I2S_SLOT_MODE_STEREO);
 
     mclog::tagInfo(TAG, "start playback");
-    codec_handle->i2s_write(_rec_test_data.audio_buffer, (48000 * 2 * 3) * sizeof(uint16_t), &bytes_written,
-                            portMAX_DELAY);
-    mclog::tagInfo(TAG, "playback done");
+    const size_t expected_write_bytes = audio_buffer_size * sizeof(uint16_t);
+    esp_err_t write_ret = codec_handle->i2s_write(_rec_test_data.audio_buffer, expected_write_bytes, &bytes_written,
+                                                   portMAX_DELAY);
+    mclog::tagInfo(TAG, "playback done: {}/{} bytes", bytes_written, expected_write_bytes);
+
+    if (clk_ret == ESP_OK && write_ret == ESP_OK && bytes_written == expected_write_bytes) {
+        ESP_LOGI(TAG, "TAB5X_AUDIO_DRIVER_TEST_PASS read=%u write=%u", static_cast<unsigned>(total_read_bytes),
+                 static_cast<unsigned>(bytes_written));
+    } else {
+        ESP_LOGE(TAG, "TAB5X_AUDIO_DRIVER_TEST_FAIL stage=playback clk=%s write=%s bytes=%u/%u",
+                 esp_err_to_name(clk_ret), esp_err_to_name(write_ret), static_cast<unsigned>(bytes_written),
+                 static_cast<unsigned>(expected_write_bytes));
+    }
 
     _rec_test_data.mutex.lock();
     _rec_test_data.state = hal::HalBase::MIC_TEST_IDLE;

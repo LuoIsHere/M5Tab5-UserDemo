@@ -1,0 +1,11 @@
+menu "Tab5X test options"
+
+config TAB5X_DRIVER_SMOKE_TEST
+    bool "Run camera and audio driver smoke tests at boot"
+    default n
+    help
+        After normal startup, run one audio record/playback cycle and capture
+        camera frames for five seconds. This validates driver calls and data
+        movement only; it does not assess acoustic or image quality.
+
+endmenu
