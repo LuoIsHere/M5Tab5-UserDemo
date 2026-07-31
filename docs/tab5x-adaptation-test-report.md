@@ -86,10 +86,11 @@ DUT 后自动回滚夹具至 `0.2.0`。
 | 夹具包内嵌 DUT SHA-256 | `3631ddcdca2509932c8d41aee77c11846ed6da3c52f4a40fcc1c97be55406f37` |
 | ROM 连接预检 | `task-ffe34e62a77e430a`，通过，ESP32-P4、16 MB Flash、MAC `E8:F6:0A:E7:BD:09` |
 | rollout | `rollout-3ee0e86134c2485d` |
+| rollout 最终状态 | `paused` / `ota_node_timeout`（一次性夹具主动回滚，符合预期） |
 | 观测结果 | 夹具离线完成写入和校验后，以新 boot ID `boot-80f1b2d14b33-dbadafb5` 回滚上线 |
 
-测试中心的 rollout 可能保持 `rebooting`，因为一次性固件主动回滚到
-`0.2.0`，不会以 rollout 目标版本持续注册；DUT 烧录结果以新 boot ID、
+测试中心的 rollout 最终因 `ota_node_timeout` 暂停，因为一次性固件主动回滚
+到 `0.2.0`，不会以 rollout 目标版本持续注册；DUT 烧录结果以新 boot ID、
 后续复位启动日志和 smoke 标记为准。
 
 ## 5. 硬件测试结果
