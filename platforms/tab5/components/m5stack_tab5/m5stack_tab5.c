@@ -5,6 +5,7 @@
  */
 
 #include "sdkconfig.h"
+#include <inttypes.h>
 #include "driver/gpio.h"
 #include "driver/ledc.h"
 #include "esp_err.h"
@@ -18,6 +19,7 @@
 #include "usb/usb_host.h"
 #include "sd_pwr_ctrl_by_on_chip_ldo.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 #include "sdmmc_cmd.h"
 #include "esp_lcd_st7123.h"
 #include "esp_lcd_st7121.h"
@@ -692,6 +694,9 @@ esp_err_t bsp_spiffs_unmount(void)
 static esp_codec_dev_handle_t play_dev_handle;
 static esp_codec_dev_handle_t record_dev_handle;
 static bsp_codec_config_t g_codec_handle;
+static SemaphoreHandle_t codec_tx_mutex;
+static esp_codec_dev_sample_info_t play_dev_format;
+static bool play_dev_format_valid;
 static int volume;
 
 /* Can be used for `i2s_std_gpio_config_t` and/or `i2s_std_config_t` initialization */
@@ -872,17 +877,33 @@ esp_codec_dev_handle_t bsp_audio_codec_microphone_init(void)
 
 static esp_err_t bsp_i2s_read(void* audio_buffer, size_t len, size_t* bytes_read, uint32_t timeout_ms)
 {
-    esp_err_t ret = ESP_OK;
-    ret           = esp_codec_dev_read(record_dev_handle, audio_buffer, len);
-    *bytes_read   = len;
+    if (audio_buffer == NULL || bytes_read == NULL || record_dev_handle == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    *bytes_read = 0;
+    esp_err_t ret = esp_codec_dev_read(record_dev_handle, audio_buffer, len);
+    if (ret == ESP_OK) {
+        *bytes_read = len;
+    }
     return ret;
 }
 
 static esp_err_t bsp_i2s_write(void* audio_buffer, size_t len, size_t* bytes_written, uint32_t timeout_ms)
 {
-    esp_err_t ret  = ESP_OK;
-    ret            = esp_codec_dev_write(play_dev_handle, audio_buffer, len);
-    *bytes_written = len;
+    if (audio_buffer == NULL || bytes_written == NULL || play_dev_handle == NULL || codec_tx_mutex == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    *bytes_written = 0;
+    TickType_t wait_ticks = (timeout_ms == portMAX_DELAY) ? portMAX_DELAY : pdMS_TO_TICKS(timeout_ms);
+    if (xSemaphoreTake(codec_tx_mutex, wait_ticks) != pdTRUE) {
+        return ESP_ERR_TIMEOUT;
+    }
+    esp_err_t ret = esp_codec_dev_write(play_dev_handle, audio_buffer, len);
+    xSemaphoreGive(codec_tx_mutex);
+    if (ret == ESP_OK) {
+        // esp_codec_dev's local I2S data interface now guarantees full-write on ESP_OK.
+        *bytes_written = len;
+    }
     return ret;
 }
 
@@ -926,19 +947,42 @@ bsp_codec_config_t* bsp_get_codec_handle(void)
 
 static esp_err_t bsp_codec_es8388_set(uint32_t rate, uint32_t bps, i2s_slot_mode_t ch)
 {
-    esp_err_t ret = ESP_OK;
-
     esp_codec_dev_sample_info_t fs = {
         .sample_rate     = rate,
         .channel         = ch,
         .bits_per_sample = bps,
     };
 
-    if (play_dev_handle) {
-        ret = esp_codec_dev_close(play_dev_handle);
+    if (play_dev_handle == NULL || codec_tx_mutex == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (xSemaphoreTake(codec_tx_mutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+        return ESP_ERR_TIMEOUT;
+    }
+
+    esp_err_t ret = ESP_OK;
+    if (play_dev_format_valid &&
+        play_dev_format.sample_rate == fs.sample_rate &&
+        play_dev_format.channel == fs.channel &&
+        play_dev_format.bits_per_sample == fs.bits_per_sample) {
+        ESP_LOGD(TAG, "Skip unchanged speaker format: %" PRIu32 " Hz/%u bit/%u ch",
+                 fs.sample_rate, fs.bits_per_sample, fs.channel);
+        goto done;
+    }
+
+    play_dev_format_valid = false;
+    ret = esp_codec_dev_close(play_dev_handle);
+    if (ret != ESP_OK) {
+        goto done;
     }
     ret = esp_codec_dev_open(play_dev_handle, &fs);
+    if (ret == ESP_OK) {
+        play_dev_format = fs;
+        play_dev_format_valid = true;
+    }
 
+done:
+    xSemaphoreGive(codec_tx_mutex);
     return ret;
 }
 
@@ -952,8 +996,12 @@ static esp_err_t bsp_codec_es7210_set(uint32_t rate, uint32_t bps, i2s_slot_mode
         .bits_per_sample = bps,
     };
 
-    if (record_dev_handle) {
-        ret = esp_codec_dev_close(record_dev_handle);
+    if (record_dev_handle == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    ret = esp_codec_dev_close(record_dev_handle);
+    if (ret != ESP_OK) {
+        return ret;
     }
     ret = esp_codec_dev_open(record_dev_handle, &fs);
 
@@ -964,6 +1012,12 @@ static esp_err_t bsp_codec_es7210_set(uint32_t rate, uint32_t bps, i2s_slot_mode
 
 void bsp_codec_init(void)
 {
+    if (codec_tx_mutex == NULL) {
+        codec_tx_mutex = xSemaphoreCreateMutex();
+        assert((codec_tx_mutex) && "codec_tx_mutex not initialized");
+    }
+    play_dev_format_valid = false;
+
     play_dev_handle = bsp_audio_codec_speaker_init();
     assert((play_dev_handle) && "play_dev_handle not initialized");
 
@@ -973,8 +1027,8 @@ void bsp_codec_init(void)
     // bsp_codec_es7210_set(16000, 16, 2);
     // bsp_codec_es8388_set(16000, 16, 2);
     // bsp_codec_es7210_set(48000, 16, 2);
-    bsp_codec_es7210_set(48000, 16, 4);
-    bsp_codec_es8388_set(48000, 16, 2);
+    ESP_ERROR_CHECK(bsp_codec_es7210_set(48000, 16, 4));
+    ESP_ERROR_CHECK(bsp_codec_es8388_set(48000, 16, 2));
 
     /* 初始化 codec handle */
     bsp_codec_config_t* codec_cfg  = bsp_get_codec_handle();  // 获取 codec handle

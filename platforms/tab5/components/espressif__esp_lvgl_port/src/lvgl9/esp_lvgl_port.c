@@ -226,6 +226,7 @@ static void lvgl_port_task(void *arg)
     EventBits_t events          = 0;
     uint32_t task_delay_ms      = 0;
     lv_indev_t *indev           = NULL;
+    TickType_t last_stack_log_tick = xTaskGetTickCount();
 
     /* Take the task semaphore */
     if (xSemaphoreTake(lvgl_port_ctx.task_init_mux, 0) != pdTRUE) {
@@ -241,7 +242,9 @@ static void lvgl_port_task(void *arg)
     /* Tick init */
     lvgl_port_tick_init();
 
-    ESP_LOGI(TAG, "Starting LVGL task");
+    ESP_LOGI(TAG, "Starting LVGL task: priority=%u core=%d stack_hwm=%u",
+             (unsigned)uxTaskPriorityGet(NULL), xPortGetCoreID(),
+             (unsigned)uxTaskGetStackHighWaterMark(NULL));
     lvgl_port_ctx.running = true;
     while (lvgl_port_ctx.running) {
         /* Wait for queue or timeout (sleep task) */
@@ -271,7 +274,13 @@ static void lvgl_port_task(void *arg)
             task_delay_ms = lvgl_port_ctx.task_max_sleep_ms;
         }
 
-        /* Minimal dealy for the task. When there is too much events, it takes time for other tasks and interrupts. */
+        TickType_t now = xTaskGetTickCount();
+        if ((now - last_stack_log_tick) >= pdMS_TO_TICKS(5000)) {
+            ESP_LOGI(TAG, "LVGL task stack_hwm=%u", (unsigned)uxTaskGetStackHighWaterMark(NULL));
+            last_stack_log_tick = now;
+        }
+
+        /* Minimal delay for the task. When there are too many events, leave time for other tasks and interrupts. */
         vTaskDelay(1);
     }
 

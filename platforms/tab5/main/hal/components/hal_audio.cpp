@@ -8,6 +8,7 @@
 #include <vector>
 #include <memory>
 #include <string.h>
+#include <inttypes.h>
 #include <bsp/m5stack_tab5.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -20,6 +21,7 @@
 static const char* TAG = "audio";
 
 static uint8_t _current_speaker_volume = 60;
+static std::mutex _audio_tx_mutex;
 
 void HalEsp32::setSpeakerVolume(uint8_t volume)
 {
@@ -56,8 +58,6 @@ static AudioTaskData_t _audio_task_data;
 
 void _audio_play_task(void* param)
 {
-    size_t bytes_written = 0;
-
     while (true) {
         _audio_task_data.mutex.lock();
 
@@ -65,12 +65,29 @@ void _audio_play_task(void* param)
             _audio_task_data.is_audio_playing = true;
             _audio_task_data.mutex.unlock();
 
-            bsp_codec_config_t* codec_handle = bsp_get_codec_handle();
-            codec_handle->set_volume(_current_speaker_volume);
-            codec_handle->i2s_reconfig_clk_fn(48000, 16, I2S_SLOT_MODE_STEREO);
-            codec_handle->i2s_write(_audio_task_data.audio_data.data(),
-                                    _audio_task_data.audio_data.size() * sizeof(uint16_t), &bytes_written,
-                                    portMAX_DELAY);
+            // UI tones are best-effort. Never let them reconfigure/write TX while MP3 owns it.
+            std::unique_lock<std::mutex> tx_lock(_audio_tx_mutex, std::try_to_lock);
+            if (tx_lock.owns_lock()) {
+                bsp_codec_config_t* codec_handle = bsp_get_codec_handle();
+                size_t bytes_written = 0;
+                esp_err_t ret = codec_handle->set_volume(_current_speaker_volume);
+                if (ret == ESP_OK) {
+                    ret = codec_handle->i2s_reconfig_clk_fn(48000, 16, I2S_SLOT_MODE_STEREO);
+                }
+                if (ret == ESP_OK) {
+                    const size_t bytes_to_write = _audio_task_data.audio_data.size() * sizeof(uint16_t);
+                    ret = codec_handle->i2s_write(_audio_task_data.audio_data.data(), bytes_to_write,
+                                                  &bytes_written, portMAX_DELAY);
+                    if (ret == ESP_OK && bytes_written != bytes_to_write) {
+                        ret = ESP_FAIL;
+                    }
+                }
+                if (ret != ESP_OK) {
+                    mclog::tagError(TAG, "async audio output failed: {}", esp_err_to_name(ret));
+                }
+            } else {
+                mclog::tagWarn(TAG, "drop async audio while music owns TX");
+            }
 
             _audio_task_data.mutex.lock();
             _audio_task_data.is_audio_playing = false;
@@ -81,7 +98,7 @@ void _audio_play_task(void* param)
         }
 
         _audio_task_data.mutex.unlock();
-        vTaskDelay(10 / portTICK_PERIOD_MS);
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
 
@@ -97,17 +114,34 @@ void HalEsp32::audioPlay(std::vector<int16_t>& data, bool async)
 
         if (!_audio_task_data.is_task_running) {
             _audio_task_data.is_task_running = true;
-            xTaskCreate(_audio_play_task, "audio", 4096, nullptr, 5, nullptr);
+            BaseType_t task_ret = xTaskCreate(_audio_play_task, "audio", 4096, nullptr, 5, nullptr);
+            if (task_ret != pdPASS) {
+                _audio_task_data.is_task_running = false;
+                mclog::tagError(TAG, "failed to create async audio task");
+                return;
+            }
         }
 
         _audio_task_data.audio_data     = data;
         _audio_task_data.is_audio_ready = true;
     } else {
+        std::lock_guard<std::mutex> tx_lock(_audio_tx_mutex);
         bsp_codec_config_t* codec_handle = bsp_get_codec_handle();
-        codec_handle->set_volume(_current_speaker_volume);
         size_t bytes_written = 0;
-        codec_handle->i2s_reconfig_clk_fn(48000, 16, I2S_SLOT_MODE_STEREO);
-        codec_handle->i2s_write(data.data(), data.size() * sizeof(uint16_t), &bytes_written, portMAX_DELAY);
+        esp_err_t ret = codec_handle->set_volume(_current_speaker_volume);
+        if (ret == ESP_OK) {
+            ret = codec_handle->i2s_reconfig_clk_fn(48000, 16, I2S_SLOT_MODE_STEREO);
+        }
+        if (ret == ESP_OK) {
+            const size_t bytes_to_write = data.size() * sizeof(uint16_t);
+            ret = codec_handle->i2s_write(data.data(), bytes_to_write, &bytes_written, portMAX_DELAY);
+            if (ret == ESP_OK && bytes_written != bytes_to_write) {
+                ret = ESP_FAIL;
+            }
+        }
+        if (ret != ESP_OK) {
+            mclog::tagError(TAG, "audio output failed: {}", esp_err_to_name(ret));
+        }
     }
 }
 
@@ -295,105 +329,250 @@ enum Mp3PlayTarget_t {
 
 struct MusicTestData_t {
     std::mutex mutex;
-    bool killSignal                      = false;
     hal::HalBase::MusicPlayState_t state = hal::HalBase::MUSIC_PLAY_IDLE;
     Mp3PlayTarget_t target               = MP3_PLAY_TARGET_CANON_IN_D;
+    TaskHandle_t taskHandle              = nullptr;
+    esp_err_t lastError                  = ESP_OK;
 };
 static MusicTestData_t _music_test_data;
+
+static bool music_stop_requested()
+{
+    std::lock_guard<std::mutex> lock(_music_test_data.mutex);
+    return _music_test_data.state == hal::HalBase::MUSIC_PLAY_STOPPING;
+}
+
+static bool music_playback_was_started()
+{
+    std::lock_guard<std::mutex> lock(_music_test_data.mutex);
+    return _music_test_data.state == hal::HalBase::MUSIC_PLAY_PLAYING ||
+           _music_test_data.state == hal::HalBase::MUSIC_PLAY_STOPPING;
+}
+
+static void music_mark_playing()
+{
+    std::lock_guard<std::mutex> lock(_music_test_data.mutex);
+    if (_music_test_data.state == hal::HalBase::MUSIC_PLAY_STARTING) {
+        _music_test_data.state = hal::HalBase::MUSIC_PLAY_PLAYING;
+    }
+}
 
 static esp_err_t audio_mute_function(AUDIO_PLAYER_MUTE_SETTING setting)
 {
     bsp_codec_config_t* codec_handle = bsp_get_codec_handle();
-    codec_handle->set_mute(setting == AUDIO_PLAYER_MUTE ? true : false);
-    return ESP_OK;
+    if (codec_handle == nullptr || codec_handle->set_mute == nullptr) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    return codec_handle->set_mute(setting == AUDIO_PLAYER_MUTE);
+}
+
+static esp_err_t audio_clock_function(uint32_t rate, uint32_t bits_per_sample, i2s_slot_mode_t channel)
+{
+    // RX/AEC remains at 48 kHz. Reconfiguring the shared I2S peripheral to 44.1 kHz
+    // breaks record/playback and previously drove Audio Task into a retry/busy loop.
+    if (rate != 48000) {
+        ESP_LOGE(TAG, "reject non-48kHz audio stream: %" PRIu32 " Hz", rate);
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+    bsp_codec_config_t* codec_handle = bsp_get_codec_handle();
+    if (codec_handle == nullptr || codec_handle->i2s_reconfig_clk_fn == nullptr) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    return codec_handle->i2s_reconfig_clk_fn(rate, bits_per_sample, channel);
 }
 
 static void audio_player_callback(audio_player_cb_ctx_t* ctx)
 {
     mclog::tagInfo(TAG, "audio event: {}", (int)ctx->audio_event);
-
     audio_player_state_t state = audio_player_get_state();
     mclog::tagInfo(TAG, "audio state: {}", (int)state);
-
-    if (state == AUDIO_PLAYER_STATE_IDLE) {
-        GetHAL()->stopPlayMusicTest();
+    if (state == AUDIO_PLAYER_STATE_PLAYING) {
+        music_mark_playing();
     }
+}
+
+static FILE* open_embedded_mp3(Mp3PlayTarget_t target)
+{
+    const uint8_t* start = nullptr;
+    const uint8_t* end   = nullptr;
+    switch (target) {
+        case MP3_PLAY_TARGET_CANON_IN_D:
+            start = canon_in_d_mp3_start;
+            end   = canon_in_d_mp3_end;
+            break;
+        case MP3_PLAY_TARGET_STARTUP_SFX:
+            start = startup_sfx_mp3_start;
+            end   = startup_sfx_mp3_end;
+            break;
+        case MP3_PLAY_TARGET_SHUTDOWN_SFX:
+            start = shutdown_sfx_mp3_start;
+            end   = shutdown_sfx_mp3_end;
+            break;
+        default:
+            return nullptr;
+    }
+    const size_t mp3_size = (end - start) - 1;
+    return fmemopen((void*)start, mp3_size, "rb");
+}
+
+static esp_err_t run_music_session(Mp3PlayTarget_t target)
+{
+    // One owner for codec reconfiguration and all TX writes for the whole MP3 session.
+    std::unique_lock<std::mutex> tx_lock(_audio_tx_mutex);
+    bsp_codec_config_t* codec_handle = bsp_get_codec_handle();
+    if (codec_handle == nullptr) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    esp_err_t ret = ESP_OK;
+    bool player_created = false;
+    FILE* fp = nullptr;
+
+    do {
+        if (music_stop_requested()) {
+            break;
+        }
+
+        ret = codec_handle->set_volume(_current_speaker_volume);
+        if (ret != ESP_OK) {
+            mclog::tagError(TAG, "set music volume failed: {}", esp_err_to_name(ret));
+            break;
+        }
+        ret = audio_clock_function(48000, 16, I2S_SLOT_MODE_STEREO);
+        if (ret != ESP_OK) {
+            mclog::tagError(TAG, "configure 48kHz output failed: {}", esp_err_to_name(ret));
+            break;
+        }
+
+        audio_player_config_t config = {
+            .mute_fn      = audio_mute_function,
+            .clk_set_fn   = audio_clock_function,
+            .write_fn     = codec_handle->i2s_write,
+            .priority     = 5,
+            .coreID       = 1,
+            .force_stereo = false,
+            .write_fn2    = nullptr,
+            .write_ctx    = nullptr,
+        };
+        ret = audio_player_new(config);
+        if (ret != ESP_OK) {
+            mclog::tagError(TAG, "audio player create failed: {}", esp_err_to_name(ret));
+            break;
+        }
+        player_created = true;
+
+        ret = audio_player_callback_register(audio_player_callback, nullptr);
+        if (ret != ESP_OK) {
+            mclog::tagError(TAG, "audio callback register failed: {}", esp_err_to_name(ret));
+            break;
+        }
+
+        fp = open_embedded_mp3(target);
+        if (fp == nullptr) {
+            ret = ESP_FAIL;
+            mclog::tagError(TAG, "open embedded MP3 failed");
+            break;
+        }
+        if (music_stop_requested()) {
+            break;
+        }
+
+        ret = audio_player_play(fp);
+        if (ret != ESP_OK) {
+            mclog::tagError(TAG, "audio play request failed: {}", esp_err_to_name(ret));
+            break;
+        }
+        // Ownership transfers to audio_player only after the play event is queued successfully.
+        fp = nullptr;
+
+        bool stop_sent = false;
+        const TickType_t start_tick = xTaskGetTickCount();
+        while (true) {
+            ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(20));
+            const bool stopping = music_stop_requested();
+            if (stopping && !stop_sent) {
+                esp_err_t stop_ret = audio_player_stop();
+                if (stop_ret == ESP_OK) {
+                    stop_sent = true;
+                } else {
+                    mclog::tagWarn(TAG, "queue music stop failed, retrying: {}", esp_err_to_name(stop_ret));
+                }
+            }
+
+            const audio_player_state_t player_state = audio_player_get_state();
+            if (player_state == AUDIO_PLAYER_STATE_PLAYING) {
+                music_mark_playing();
+            } else if (player_state == AUDIO_PLAYER_STATE_IDLE) {
+                if (music_playback_was_started() || stopping) {
+                    ret = audio_player_get_last_error();
+                    if (ret != ESP_OK) {
+                        mclog::tagError(TAG, "audio playback failed: {}", esp_err_to_name(ret));
+                    }
+                    break;
+                }
+                if ((xTaskGetTickCount() - start_tick) > pdMS_TO_TICKS(2000)) {
+                    ret = ESP_ERR_TIMEOUT;
+                    mclog::tagError(TAG, "audio player did not start within timeout");
+                    break;
+                }
+            } else if (player_state == AUDIO_PLAYER_STATE_SHUTDOWN) {
+                ret = ESP_ERR_INVALID_STATE;
+                break;
+            }
+        }
+    } while (false);
+
+    if (fp != nullptr) {
+        fclose(fp);
+    }
+    if (player_created) {
+        esp_err_t delete_ret = audio_player_delete();
+        if (delete_ret != ESP_OK) {
+            mclog::tagError(TAG, "audio player delete failed: {}", esp_err_to_name(delete_ret));
+            ret = delete_ret;
+        }
+    }
+    return ret;
 }
 
 static void _music_play_task(void* param)
 {
-    bsp_codec_config_t* codec_handle = bsp_get_codec_handle();
-    codec_handle->set_volume(_current_speaker_volume);
-    codec_handle->i2s_reconfig_clk_fn(48000, 16, I2S_SLOT_MODE_STEREO);
-
-    audio_player_config_t config = {
-        .mute_fn    = audio_mute_function,
-        .clk_set_fn = codec_handle->i2s_reconfig_clk_fn,
-        .write_fn   = codec_handle->i2s_write,
-        .priority   = 8,
-        .coreID     = 1,
-        .force_stereo = false,
-        .write_fn2    = nullptr,
-        .write_ctx    = nullptr,
-    };
-    ESP_ERROR_CHECK(audio_player_new(config));
-    audio_player_callback_register(audio_player_callback, NULL);
-
-    size_t mp3_size = 0;
-    FILE* fp        = nullptr;
-    switch (_music_test_data.target) {
-        case MP3_PLAY_TARGET_CANON_IN_D:
-            mp3_size = (canon_in_d_mp3_end - canon_in_d_mp3_start) - 1;
-            fp       = fmemopen((void*)canon_in_d_mp3_start, mp3_size, "rb");
-            break;
-        case MP3_PLAY_TARGET_STARTUP_SFX:
-            mp3_size = (startup_sfx_mp3_end - startup_sfx_mp3_start) - 1;
-            fp       = fmemopen((void*)startup_sfx_mp3_start, mp3_size, "rb");
-            break;
-        case MP3_PLAY_TARGET_SHUTDOWN_SFX:
-            mp3_size = (shutdown_sfx_mp3_end - shutdown_sfx_mp3_start) - 1;
-            fp       = fmemopen((void*)shutdown_sfx_mp3_start, mp3_size, "rb");
-            break;
+    Mp3PlayTarget_t target;
+    {
+        std::lock_guard<std::mutex> lock(_music_test_data.mutex);
+        target = _music_test_data.target;
     }
 
-    esp_err_t ret = audio_player_play(fp);
-    if (ret != ESP_OK) {
-        mclog::tagError(TAG, "audio play failed");
-        vTaskDelete(NULL);
+    esp_err_t ret = run_music_session(target);
+
+    {
+        std::lock_guard<std::mutex> lock(_music_test_data.mutex);
+        _music_test_data.lastError = ret;
+        _music_test_data.taskHandle = nullptr;
+        _music_test_data.state = (ret == ESP_OK) ? hal::HalBase::MUSIC_PLAY_IDLE
+                                                  : hal::HalBase::MUSIC_PLAY_ERROR;
+    }
+    vTaskDelete(nullptr);
+}
+
+static void try_create_music_play_task(Mp3PlayTarget_t target)
+{
+    if (_music_test_data.state != hal::HalBase::MUSIC_PLAY_IDLE &&
+        _music_test_data.state != hal::HalBase::MUSIC_PLAY_ERROR) {
+        mclog::tagWarn(TAG, "music start ignored in state {}", (int)_music_test_data.state);
         return;
     }
 
-    while (1) {
-        vTaskDelay(pdMS_TO_TICKS(100));
-
-        std::lock_guard<std::mutex> lock(_music_test_data.mutex);
-        if (_music_test_data.killSignal) {
-            break;
-        }
-    }
-
-    ret = audio_player_delete();
-    if (ret != ESP_OK) {
-        mclog::tagError(TAG, "audio player delete failed");
-    }
-
-    _music_test_data.mutex.lock();
-    _music_test_data.state      = hal::HalBase::MUSIC_PLAY_IDLE;
-    _music_test_data.killSignal = false;
-    _music_test_data.mutex.unlock();
-
-    vTaskDelete(NULL);
-}
-
-void try_create_music_play_task(Mp3PlayTarget_t target)
-{
-    if (_music_test_data.state == hal::HalBase::MUSIC_PLAY_IDLE) {
-        _music_test_data.state      = hal::HalBase::MUSIC_PLAY_PLAYING;
-        _music_test_data.target     = target;
-        _music_test_data.killSignal = false;
-        xTaskCreate(_music_play_task, "music", 3000, nullptr, 5, nullptr);
-    } else {
-        mclog::tagWarn(TAG, "music play is running");
+    _music_test_data.state = hal::HalBase::MUSIC_PLAY_STARTING;
+    _music_test_data.target = target;
+    _music_test_data.lastError = ESP_OK;
+    BaseType_t task_ret = xTaskCreate(_music_play_task, "music", 4096, nullptr, 5,
+                                      &_music_test_data.taskHandle);
+    if (task_ret != pdPASS) {
+        _music_test_data.taskHandle = nullptr;
+        _music_test_data.lastError = ESP_ERR_NO_MEM;
+        _music_test_data.state = hal::HalBase::MUSIC_PLAY_ERROR;
+        mclog::tagError(TAG, "failed to create music task");
     }
 }
 
@@ -412,7 +591,13 @@ hal::HalBase::MusicPlayState_t HalEsp32::getMusicPlayTestState()
 void HalEsp32::stopPlayMusicTest()
 {
     std::lock_guard<std::mutex> lock(_music_test_data.mutex);
-    _music_test_data.killSignal = true;
+    if (_music_test_data.state == hal::HalBase::MUSIC_PLAY_STARTING ||
+        _music_test_data.state == hal::HalBase::MUSIC_PLAY_PLAYING) {
+        _music_test_data.state = hal::HalBase::MUSIC_PLAY_STOPPING;
+        if (_music_test_data.taskHandle != nullptr) {
+            xTaskNotifyGive(_music_test_data.taskHandle);
+        }
+    }
 }
 
 /* -------------------------------------------------------------------------- */

@@ -17,6 +17,8 @@
 extern "C" {
 #endif
 
+struct esp_video;
+
 /**
  * @brief MIPI-CSI state
  */
@@ -41,7 +43,8 @@ typedef struct esp_video_csi_state {
  *      - Others if failed
  */
 #if CONFIG_ESP_VIDEO_ENABLE_MIPI_CSI_VIDEO_DEVICE
-esp_err_t esp_video_create_csi_video_device(esp_cam_sensor_device_t *cam_dev);
+esp_err_t esp_video_create_csi_video_device(esp_cam_sensor_device_t *cam_dev, struct esp_video **out_video);
+esp_err_t esp_video_destroy_csi_video_device(struct esp_video *video);
 #endif
 
 /**
@@ -54,7 +57,8 @@ esp_err_t esp_video_create_csi_video_device(esp_cam_sensor_device_t *cam_dev);
  *      - Others if failed
  */
 #if CONFIG_ESP_VIDEO_ENABLE_DVP_VIDEO_DEVICE
-esp_err_t esp_video_create_dvp_video_device(esp_cam_sensor_device_t *cam_dev);
+esp_err_t esp_video_create_dvp_video_device(esp_cam_sensor_device_t *cam_dev, struct esp_video **out_video);
+esp_err_t esp_video_destroy_dvp_video_device(struct esp_video *video);
 #endif
 
 /**
@@ -67,7 +71,8 @@ esp_err_t esp_video_create_dvp_video_device(esp_cam_sensor_device_t *cam_dev);
  *      - Others if failed
  */
 #ifdef CONFIG_ESP_VIDEO_ENABLE_H264_VIDEO_DEVICE
-esp_err_t esp_video_create_h264_video_device(bool hw_codec);
+esp_err_t esp_video_create_h264_video_device(bool hw_codec, struct esp_video **out_video);
+esp_err_t esp_video_destroy_h264_video_device(struct esp_video *video);
 #endif
 
 /**
@@ -82,7 +87,8 @@ esp_err_t esp_video_create_h264_video_device(bool hw_codec);
  *      - Others if failed
  */
 #ifdef CONFIG_ESP_VIDEO_ENABLE_JPEG_VIDEO_DEVICE
-esp_err_t esp_video_create_jpeg_video_device(jpeg_encoder_handle_t enc_handle);
+esp_err_t esp_video_create_jpeg_video_device(jpeg_encoder_handle_t enc_handle, struct esp_video **out_video);
+esp_err_t esp_video_destroy_jpeg_video_device(struct esp_video *video);
 #endif
 
 #if CONFIG_ESP_VIDEO_ENABLE_ISP
@@ -142,7 +148,8 @@ esp_err_t esp_video_isp_check_format(const struct v4l2_format *format);
  *      - ESP_OK on success
  *      - Others if failed
  */
-esp_err_t esp_video_create_isp_video_device(void);
+esp_err_t esp_video_create_isp_video_device(struct esp_video **out_video);
+esp_err_t esp_video_destroy_isp_video_device(struct esp_video *video);
 #endif
 #endif
 

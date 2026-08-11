@@ -400,9 +400,9 @@ esp_err_t esp_video_destroy(struct esp_video *video)
     }
 
     ret = esp_video_vfs_dev_unregister(vfs_name);
-    if (ret <= 0) {
-        ESP_LOGE(TAG, "Failed to unregister video VFS dev name=%s", vfs_name);
-        return ESP_ERR_NO_MEM;
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to unregister video VFS dev name=%s, err=%s", vfs_name, esp_err_to_name(ret));
+        return ret;
     }
 
     _lock_acquire(&s_video_lock);

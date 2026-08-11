@@ -5,7 +5,9 @@ dependencies:
   espressif/esp_h264: 1.0.4
   espressif/esp_hosted: ^2.11
   espressif/esp_wifi_remote: ^1.6.3
-  chmorgan/esp-audio-player: 1.1.0
+  chmorgan/esp-audio-player:
+    version: 1.1.0
+    override_path: '../components/chmorgan__esp-audio-player'
   chmorgan/esp-file-iterator: 1.0.0
   espressif/led_strip: 3.0.3
   espressif/esp_lcd_ili9881c: 1.0.1

@@ -34,7 +34,9 @@
 
 typedef struct esp_video_isp {
     int isp_fd;
+    bool isp_streaming;
     esp_video_isp_stats_t *isp_stats[ISP_METADATA_BUFFER_COUNT];
+    size_t isp_stats_length[ISP_METADATA_BUFFER_COUNT];
 
     int cam_fd;
 
@@ -43,6 +45,44 @@ typedef struct esp_video_isp {
 } esp_video_isp_t;
 
 static const char *TAG = "ISP";
+
+static void deinit_cam_dev(esp_video_isp_t *isp)
+{
+    if (isp->cam_fd >= 0) {
+        close(isp->cam_fd);
+        isp->cam_fd = -1;
+    }
+}
+
+static void deinit_isp_dev(esp_video_isp_t *isp)
+{
+    if (isp->isp_fd < 0) {
+        return;
+    }
+
+    int type = V4L2_BUF_TYPE_META_CAPTURE;
+    if (isp->isp_streaming) {
+        ioctl(isp->isp_fd, VIDIOC_STREAMOFF, &type);
+        isp->isp_streaming = false;
+    }
+
+    for (int i = 0; i < ISP_METADATA_BUFFER_COUNT; ++i) {
+        if (isp->isp_stats[i] != NULL) {
+            munmap(isp->isp_stats[i], isp->isp_stats_length[i]);
+        }
+        isp->isp_stats[i]        = NULL;
+        isp->isp_stats_length[i] = 0;
+    }
+
+    struct v4l2_requestbuffers req = {
+        .count  = 0,
+        .type   = V4L2_BUF_TYPE_META_CAPTURE,
+        .memory = V4L2_MEMORY_MMAP,
+    };
+    ioctl(isp->isp_fd, VIDIOC_REQBUFS, &req);
+    close(isp->isp_fd);
+    isp->isp_fd = -1;
+}
 
 /**
  * @brief Print ISP statistics data
@@ -555,6 +595,7 @@ static void isp_task(void *p)
         buf.memory = V4L2_MEMORY_MMAP;
         if (ioctl(isp->isp_fd, VIDIOC_DQBUF, &buf) != 0) {
             ESP_LOGE(TAG, "failed to receive video frame");
+            vTaskDelay(pdMS_TO_TICKS(10));
             continue;
         }
 
@@ -586,7 +627,8 @@ static esp_err_t init_cam_dev(const esp_video_isp_config_t *config, esp_video_is
     struct v4l2_ext_control control[1];
 
     fd = open(config->cam_dev, O_RDWR);
-    ESP_RETURN_ON_FALSE(fd > 0, ESP_ERR_INVALID_ARG, TAG, "failed to open %s", config->cam_dev);
+    ESP_RETURN_ON_FALSE(fd >= 0, ESP_ERR_INVALID_ARG, TAG, "failed to open %s", config->cam_dev);
+    isp->cam_fd = fd;
     print_dev_info(fd);
 
     qctrl.id = V4L2_CID_GAIN;
@@ -658,12 +700,10 @@ static esp_err_t init_cam_dev(const esp_video_isp_config_t *config, esp_video_is
     ESP_LOGD(TAG, "  step:    %" PRIu64, qctrl.step);
     ESP_LOGD(TAG, "  current: %" PRIi32, control[0].value);
 
-    isp->cam_fd = fd;
-
     return ESP_OK;
 
 fail_0:
-    close(fd);
+    deinit_cam_dev(isp);
     return ret;
 }
 
@@ -675,7 +715,8 @@ static esp_err_t init_isp_dev(const esp_video_isp_config_t *config, esp_video_is
     int type = V4L2_BUF_TYPE_META_CAPTURE;
 
     fd = open(config->isp_dev, O_RDWR);
-    ESP_RETURN_ON_FALSE(fd > 0, ESP_ERR_INVALID_ARG, TAG, "failed to open %s", config->isp_dev);
+    ESP_RETURN_ON_FALSE(fd >= 0, ESP_ERR_INVALID_ARG, TAG, "failed to open %s", config->isp_dev);
+    isp->isp_fd = fd;
     print_dev_info(fd);
 
     memset(&req, 0, sizeof(req));
@@ -697,7 +738,9 @@ static esp_err_t init_isp_dev(const esp_video_isp_config_t *config, esp_video_is
 
         isp->isp_stats[i] =
             (esp_video_isp_stats_t *)mmap(NULL, buf.length, PROT_READ | PROT_WRITE, MAP_SHARED, fd, buf.m.offset);
-        ESP_GOTO_ON_FALSE(isp->isp_stats[i] != NULL, ESP_FAIL, fail_0, TAG, "failed to map buffer");
+        ESP_GOTO_ON_FALSE(isp->isp_stats[i] != NULL, ESP_FAIL, fail_0, TAG,
+                          "failed to map buffer");
+        isp->isp_stats_length[i] = buf.length;
 
         ret = ioctl(fd, VIDIOC_QBUF, &buf);
         ESP_GOTO_ON_FALSE(ret == 0, ESP_FAIL, fail_0, TAG, "failed to queue buffer");
@@ -705,13 +748,12 @@ static esp_err_t init_isp_dev(const esp_video_isp_config_t *config, esp_video_is
 
     ret = ioctl(fd, VIDIOC_STREAMON, &type);
     ESP_GOTO_ON_FALSE(ret == 0, ESP_FAIL, fail_0, TAG, "failed to start stream");
-
-    isp->isp_fd = fd;
+    isp->isp_streaming = true;
 
     return ESP_OK;
 
 fail_0:
-    close(fd);
+    deinit_isp_dev(isp);
     return ret;
 }
 
@@ -740,8 +782,10 @@ esp_err_t esp_video_isp_pipeline_init(const esp_video_isp_config_t *config)
         return ESP_ERR_INVALID_ARG;
     }
 
-    isp = malloc(sizeof(esp_video_isp_t));
+    isp = calloc(1, sizeof(esp_video_isp_t));
     ESP_RETURN_ON_FALSE(isp, ESP_ERR_NO_MEM, TAG, "failed to malloc isp");
+    isp->isp_fd = -1;
+    isp->cam_fd = -1;
 
     ESP_GOTO_ON_ERROR(esp_ipa_pipeline_create(config->ipa_nums, config->ipa_names, &isp->ipa_pipeline), fail_0, TAG,
                       "failed to create IPA pipeline");
@@ -760,9 +804,9 @@ esp_err_t esp_video_isp_pipeline_init(const esp_video_isp_config_t *config)
     return ESP_OK;
 
 fail_3:
-    close(isp->isp_fd);
+    deinit_isp_dev(isp);
 fail_2:
-    close(isp->cam_fd);
+    deinit_cam_dev(isp);
 fail_1:
     esp_ipa_pipeline_destroy(isp->ipa_pipeline);
 fail_0:

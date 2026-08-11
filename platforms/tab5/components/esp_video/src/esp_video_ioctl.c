@@ -12,6 +12,8 @@
 #include "esp_video_vfs.h"
 #include "esp_video_ioctl_internal.h"
 
+#define ESP_VIDEO_DQBUF_TIMEOUT_MS 100
+
 #define BUF_OFF(type, element_index) (((uint32_t)type << 24) + element_index)
 #define BUF_OFF_2_INDEX(buf_off)     ((buf_off)&0x00ffffff)
 #define BUF_OFF_2_TYPE(buf_off)      ((buf_off) >> 24)
@@ -173,7 +175,7 @@ static esp_err_t esp_video_ioctl_qbuf(struct esp_video *video, struct v4l2_buffe
 static esp_err_t esp_video_ioctl_dqbuf(struct esp_video *video, struct v4l2_buffer *vbuf)
 {
     esp_err_t ret;
-    uint32_t ticks = portMAX_DELAY;
+    uint32_t ticks = pdMS_TO_TICKS(ESP_VIDEO_DQBUF_TIMEOUT_MS);
     struct esp_video_buffer_info info;
     struct esp_video_buffer_element *element;
 
@@ -188,7 +190,7 @@ static esp_err_t esp_video_ioctl_dqbuf(struct esp_video *video, struct v4l2_buff
 
     element = esp_video_recv_element(video, vbuf->type, ticks);
     if (!element) {
-        return ESP_FAIL;
+        return ESP_ERR_TIMEOUT;
     }
 
     vbuf->flags     = 0;

@@ -80,8 +80,12 @@ void HalEsp32::powerOff()
     setDisplayBrightness(0);
 
     delay(100);
+    const uint32_t audio_wait_start = millis();
     while (1) {
-        if (getMusicPlayTestState() == hal::HalBase::MUSIC_PLAY_IDLE) {
+        const auto state = getMusicPlayTestState();
+        if (state == hal::HalBase::MUSIC_PLAY_IDLE ||
+            state == hal::HalBase::MUSIC_PLAY_ERROR ||
+            millis() - audio_wait_start >= 5000) {
             break;
         }
         delay(100);

@@ -1,17 +1,9 @@
 dependencies:
   chmorgan/esp-audio-player:
-    component_hash: a19dba40c076e59baaf6383041b6feeb25135dbc5a5b8bcc6b497d8d947095c6
-    dependencies:
-    - name: chmorgan/esp-libhelix-mp3
-      registry_url: https://components.espressif.com
-      require: private
-      version: '>=1.0.0,<2.0.0'
-    - name: idf
-      require: private
-      version: '>=5.0'
+    dependencies: []
     source:
-      registry_url: https://components.espressif.com/
-      type: service
+      path: components/chmorgan__esp-audio-player
+      type: local
     version: 1.1.0
   chmorgan/esp-file-iterator:
     component_hash: 327091394b9ef5c2cd395a960ab70ae64479e0a8831cbd9925e38895fad93719
@@ -30,7 +22,7 @@ dependencies:
       require: private
       version: '>=4.1.0'
     source:
-      registry_url: https://components.espressif.com
+      registry_url: https://components.espressif.com/
       type: service
     version: 1.0.3
   espressif/cmake_utilities:
@@ -58,14 +50,10 @@ dependencies:
       type: service
     version: 1.1.5
   espressif/esp_codec_dev:
-    component_hash: e49cce5b5ad29a1503ab4f8488087c7bfe0ccdffed982e8cb99eec6bb5970f96
-    dependencies:
-    - name: idf
-      require: private
-      version: '>=4.0'
+    dependencies: []
     source:
-      registry_url: https://components.espressif.com/
-      type: service
+      path: components/espressif__esp_codec_dev
+      type: local
     version: 1.5.5
   espressif/esp_h264:
     component_hash: fa5daaebc8a304f0b79bc57e51aab43e0a03eabc2ba3865bff4063c56b5d4564
@@ -78,7 +66,7 @@ dependencies:
       type: service
     version: 1.0.4
   espressif/esp_hosted:
-    component_hash: f970ce453bcd6e779e067de04488aa6212295f4a607f041d038844c8cf8edea3
+    component_hash: 8ca10092db3e8c8122540d907ab705805a269377d31192f087ba1def2f5f4f91
     dependencies:
     - name: idf
       require: private
@@ -86,7 +74,7 @@ dependencies:
     source:
       registry_url: https://components.espressif.com/
       type: service
-    version: 2.12.11
+    version: 2.12.12
   espressif/esp_lcd_ili9881c:
     component_hash: f4f374226b62baf13f735864e8fae58e17c537df34d598e059f6caad4761ef65
     dependencies:
@@ -239,6 +227,7 @@ dependencies:
 direct_dependencies:
 - chmorgan/esp-audio-player
 - chmorgan/esp-file-iterator
+- chmorgan/esp-libhelix-mp3
 - espressif/cmake_utilities
 - espressif/esp_codec_dev
 - espressif/esp_h264
@@ -253,6 +242,6 @@ direct_dependencies:
 - espressif/usb_host_hid
 - idf
 - lvgl/lvgl
-manifest_hash: e653a7004629012ff8936b6f291a25ea079d6b8809974552a43574feb79eb1ea
+manifest_hash: 42d0e2c07fc82fcc3869c91a9335bffead34adcbc27b2dec8a8e69bd288df890
 target: esp32p4
 version: 3.0.0

@@ -377,9 +377,14 @@ static const struct esp_video_ops s_jpeg_video_ops = {
  *      - ESP_OK on success
  *      - Others if failed
  */
-esp_err_t esp_video_create_jpeg_video_device(jpeg_encoder_handle_t enc_handle)
+esp_err_t esp_video_create_jpeg_video_device(jpeg_encoder_handle_t enc_handle, struct esp_video **out_video)
 {
     struct esp_video *video;
+
+    if (!out_video) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    *out_video = NULL;
     struct jpeg_video *jpeg_video;
     uint32_t device_caps = V4L2_CAP_VIDEO_M2M | V4L2_CAP_EXT_PIX_FORMAT | V4L2_CAP_STREAMING;
     uint32_t caps        = device_caps | V4L2_CAP_DEVICE_CAPS;
@@ -402,5 +407,23 @@ esp_err_t esp_video_create_jpeg_video_device(jpeg_encoder_handle_t enc_handle)
         return ESP_FAIL;
     }
 
+    *out_video = video;
     return ESP_OK;
+}
+
+esp_err_t esp_video_destroy_jpeg_video_device(struct esp_video *video)
+{
+    struct jpeg_video *private_data;
+    esp_err_t ret;
+
+    if (!video) {
+        return ESP_OK;
+    }
+
+    private_data = VIDEO_PRIV_DATA(struct jpeg_video *, video);
+    ret = esp_video_destroy(video);
+    if (ret == ESP_OK) {
+        heap_caps_free(private_data);
+    }
+    return ret;
 }

@@ -230,7 +230,10 @@ public:
     // Play music test
     enum MusicPlayState_t {
         MUSIC_PLAY_IDLE,
+        MUSIC_PLAY_STARTING,
         MUSIC_PLAY_PLAYING,
+        MUSIC_PLAY_STOPPING,
+        MUSIC_PLAY_ERROR,
     };
     virtual void startPlayMusicTest()
     {

@@ -1482,8 +1482,13 @@ static const struct esp_video_ops s_isp_video_ops = {
  *      - ESP_OK on success
  *      - Others if failed
  */
-esp_err_t esp_video_create_isp_video_device(void)
+esp_err_t esp_video_create_isp_video_device(struct esp_video **out_video)
 {
+    if (!out_video) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    *out_video = NULL;
+
     uint32_t device_caps = V4L2_CAP_META_CAPTURE | V4L2_CAP_EXT_PIX_FORMAT | V4L2_CAP_STREAMING;
     uint32_t caps        = device_caps | V4L2_CAP_DEVICE_CAPS;
 
@@ -1512,6 +1517,28 @@ esp_err_t esp_video_create_isp_video_device(void)
     s_isp_video.color_config.color_hue            = ISP_HUE_DEFAULT;
     s_isp_video.color_config.color_brightness     = ISP_BRIGHTNESS_DEFAULT;
 
+    *out_video = s_isp_video.video;
+    return ESP_OK;
+}
+
+esp_err_t esp_video_destroy_isp_video_device(struct esp_video *video)
+{
+    esp_err_t ret;
+
+    if (!video) {
+        return ESP_OK;
+    }
+    if (video != s_isp_video.video) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    ret = esp_video_destroy(video);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+
+    vSemaphoreDelete(s_isp_video.mutex);
+    memset(&s_isp_video, 0, sizeof(s_isp_video));
     return ESP_OK;
 }
 #endif

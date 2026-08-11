@@ -60,9 +60,12 @@ public:
         _rec_btn->setBorderColor(lv_color_hex(0x383838));
         _rec_btn->setShadowWidth(0);
         _rec_btn->onClick().connect([&]() {
-            if (GetHAL()->getMusicPlayTestState() == hal::HalBase::MUSIC_PLAY_IDLE) {
+            const auto state = GetHAL()->getMusicPlayTestState();
+            if (state == hal::HalBase::MUSIC_PLAY_IDLE ||
+                state == hal::HalBase::MUSIC_PLAY_ERROR) {
                 GetHAL()->startPlayMusicTest();
-            } else {
+            } else if (state == hal::HalBase::MUSIC_PLAY_STARTING ||
+                       state == hal::HalBase::MUSIC_PLAY_PLAYING) {
                 GetHAL()->stopPlayMusicTest();
             }
             update_rec_button();
@@ -114,9 +117,19 @@ private:
 
     void update_rec_button()
     {
-        if (GetHAL()->getMusicPlayTestState() == hal::HalBase::MUSIC_PLAY_PLAYING) {
+        const auto state = GetHAL()->getMusicPlayTestState();
+        if (state == hal::HalBase::MUSIC_PLAY_STARTING) {
+            _rec_btn->label().setText("STARTING");
+            update_spinner(0x31D584);
+        } else if (state == hal::HalBase::MUSIC_PLAY_PLAYING) {
             _rec_btn->label().setText("STOP");
             update_spinner(0x31D584);
+        } else if (state == hal::HalBase::MUSIC_PLAY_STOPPING) {
+            _rec_btn->label().setText("STOPPING");
+            update_spinner(0xD5A331);
+        } else if (state == hal::HalBase::MUSIC_PLAY_ERROR) {
+            _rec_btn->label().setText("RETRY");
+            _rec_btn_spinner.reset();
         } else {
             _rec_btn->label().setText(" PLAY\nMUSIC");
             _rec_btn_spinner.reset();
