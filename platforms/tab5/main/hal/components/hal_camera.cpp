@@ -58,7 +58,6 @@ typedef enum {
     EXAMPLE_VIDEO_FMT_GREY   = V4L2_PIX_FMT_GREY,
     EXAMPLE_VIDEO_FMT_RGB565 = V4L2_PIX_FMT_RGB565,
     EXAMPLE_VIDEO_FMT_RGB888 = V4L2_PIX_FMT_RGB24,
-    EXAMPLE_VIDEO_FMT_YUV422 = V4L2_PIX_FMT_YUV422P,
     EXAMPLE_VIDEO_FMT_YUV420 = V4L2_PIX_FMT_YUV420,
 } example_fmt_t;
 
@@ -384,20 +383,18 @@ static esp_err_t ensure_video_initialized()
             .i2c_handle = nullptr,
             .freq = 400000,
         },
-        .reset_pin = -1,
-        .pwdn_pin = -1,
+        .reset_pin = GPIO_NUM_NC,
+        .pwdn_pin = GPIO_NUM_NC,
+        .dont_init_ldo = true,
     };
     csi_config.sccb_config.i2c_handle = bsp_i2c_get_handle();
 
-    esp_video_init_config_t camera_config = {
-        .csi = &csi_config,
-        .dvp = nullptr,
-        .jpeg = nullptr,
-        .isp = nullptr,
-    };
+    esp_video_init_config_t camera_config = {};
+    camera_config.csi = &csi_config;
 
     ESP_LOGI(TAG, "Initializing esp_video");
-    esp_err_t ret = esp_video_init(&camera_config);
+    esp_err_t ret = esp_video_init_with_flags(
+        &camera_config, ESP_VIDEO_INIT_FLAGS_ISP | ESP_VIDEO_INIT_FLAGS_MIPI_CSI);
     if (ret == ESP_OK) {
         std::lock_guard<std::mutex> lock(camera_ctx.mutex);
         camera_ctx.video_initialized = true;
