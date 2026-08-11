@@ -36,13 +36,20 @@ static void tab5_rs485_echo_send(const int port, uint8_t* str, uint8_t length)
     }
 }
 
+/*
+ * RS485 diagnostic fields:
+ * - stack_hwm_bytes: minimum free task stack observed since task creation.
+ * - heap_ok: 1 when all heap regions pass the integrity check, otherwise 0.
+ * - free_internal_bytes: current total free internal-RAM heap.
+ * - free_spiram_bytes: current total free PSRAM heap.
+ */
 static void _rs485_test_task(void* param)
 {
     (void)param;
     uint8_t data[TAB5_RS485_BUF_SIZE];
     TickType_t last_diag_tick = xTaskGetTickCount();
 
-    ESP_LOGI(TAG, "RS485 task started: priority=%u core=%d stack_hwm=%u",
+    ESP_LOGI(TAG, "RS485 task started: priority=%u core=%d stack_hwm_bytes=%u",
              static_cast<unsigned>(uxTaskPriorityGet(nullptr)), xPortGetCoreID(),
              static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
 
@@ -73,7 +80,7 @@ static void _rs485_test_task(void* param)
         TickType_t now = xTaskGetTickCount();
         if ((now - last_diag_tick) >= pdMS_TO_TICKS(TAB5_RS485_DIAG_INTERVAL_MS)) {
             const bool heap_ok = heap_caps_check_integrity_all(true);
-            ESP_LOGI(TAG, "RS485 diagnostics: stack_hwm=%u heap_ok=%d free_internal=%u free_spiram=%u",
+            ESP_LOGI(TAG, "RS485 diagnostics: stack_hwm_bytes=%u heap_ok=%d free_internal_bytes=%u free_spiram_bytes=%u",
                      static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)), heap_ok,
                      static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
                      static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)));

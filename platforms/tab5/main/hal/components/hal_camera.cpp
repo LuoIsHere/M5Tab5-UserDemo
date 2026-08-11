@@ -35,7 +35,6 @@ static const char* TAG = "camera";
 #define CAM_DEV_PATH               ESP_VIDEO_MIPI_CSI_DEVICE_NAME
 #define CAMERA_TASK_STACK_SIZE     (8 * 1024)
 #define CAMERA_TASK_PRIORITY       5
-#define CAMERA_STOP_TIMEOUT_MS     2000
 #define CAMERA_STACK_LOG_MS        5000
 #define CAMERA_REFRESH_TIMEOUT_MS   1000
 #define CAMERA_INVALID_LOG_INTERVAL 30
@@ -246,6 +245,9 @@ static bool camera_canvas_attach(lv_obj_t* canvas, uint8_t* front_buffer, uint8_
     if (canvas == nullptr || front_buffer == nullptr || next_back_buffer == nullptr) {
         return false;
     }
+    if (camera_stop_requested()) {
+        return false;
+    }
     if (!bsp_display_lock(100)) {
         ESP_LOGW(TAG, "Timed out waiting for LVGL lock while publishing camera frame");
         return false;
@@ -285,8 +287,8 @@ static void camera_canvas_detach(lv_obj_t* canvas)
         return;
     }
 
-    // timeout_ms == 0 means portMAX_DELAY. stopCameraCapture() invokes this before
-    // waiting, so cleanup never waits on a LVGL lock held by the stopping caller.
+    // timeout_ms == 0 means portMAX_DELAY. When stop is requested from an LVGL
+    // callback, the port's recursive mutex lets the callback detach before returning.
     if (!bsp_display_lock(0)) {
         return;
     }
@@ -583,6 +585,13 @@ static void camera_task_finish(esp_err_t result)
     vTaskDelete(nullptr);
 }
 
+/*
+ * Camera diagnostic fields:
+ * - stack_hwm_bytes: minimum free task stack observed since task creation.
+ * - spiram_free_bytes: current total free PSRAM heap.
+ * - spiram_largest_block_bytes: current largest contiguous free PSRAM block.
+ * - frames, invalid, publish_drop: cumulative frame counters for this capture task.
+ */
 static void app_camera_display(void* arg)
 {
     (void)arg;
@@ -607,7 +616,7 @@ static void app_camera_display(void* arg)
         canvas = camera_ctx.canvas;
     }
 
-    ESP_LOGI(TAG, "Camera task started: priority=%u core=%d stack_hwm=%u",
+    ESP_LOGI(TAG, "Camera task started: priority=%u core=%d stack_hwm_bytes=%u",
              static_cast<unsigned>(uxTaskPriorityGet(nullptr)), xPortGetCoreID(),
              static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
 
@@ -670,7 +679,7 @@ static void app_camera_display(void* arg)
             break;
         }
 
-        ESP_LOGI(TAG, "Allocating %u camera display buffers, %u bytes each; SPIRAM free=%u largest=%u",
+        ESP_LOGI(TAG, "Allocating %u camera display buffers, %u bytes each; spiram_free_bytes=%u spiram_largest_block_bytes=%u",
                  CAMERA_DISPLAY_BUFFER_COUNT, static_cast<unsigned>(expected_frame_size),
                  static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)),
                  static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM)));
@@ -752,7 +761,7 @@ static void app_camera_display(void* arg)
                 if (dq_errno == ETIMEDOUT || dq_errno == EAGAIN || dq_errno == EINTR) {
                     TickType_t now = xTaskGetTickCount();
                     if ((now - last_stack_log_tick) >= pdMS_TO_TICKS(CAMERA_STACK_LOG_MS)) {
-                        ESP_LOGI(TAG, "Camera task stack_hwm=%u state=%s frames=%u invalid=%u publish_drop=%u",
+                        ESP_LOGI(TAG, "Camera task stack_hwm_bytes=%u state=%s frames=%u invalid=%u publish_drop=%u",
                                  static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)),
                                  camera_state_name(CameraState::STREAMING), static_cast<unsigned>(frame_count),
                                  static_cast<unsigned>(invalid_frame_count),
@@ -834,7 +843,7 @@ static void app_camera_display(void* arg)
                 result = ppa_do_scale_rotate_mirror(ppa_handle, &srm_config);
                 if (result != ESP_OK) {
                     ESP_LOGE(TAG, "PPA processing failed: %s", esp_err_to_name(result));
-                } else {
+                } else if (!camera_stop_requested()) {
                     uint8_t* previous_front = front_buffer;
                     uint8_t* next_back = previous_front != nullptr ? previous_front : display_buffers[1];
                     if (camera_canvas_attach(canvas, back_buffer, next_back)) {
@@ -875,7 +884,7 @@ static void app_camera_display(void* arg)
 
             TickType_t now = xTaskGetTickCount();
             if ((now - last_stack_log_tick) >= pdMS_TO_TICKS(CAMERA_STACK_LOG_MS)) {
-                ESP_LOGI(TAG, "Camera task stack_hwm=%u state=%s frames=%u invalid=%u publish_drop=%u",
+                ESP_LOGI(TAG, "Camera task stack_hwm_bytes=%u state=%s frames=%u invalid=%u publish_drop=%u",
                          static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)),
                          camera_state_name(CameraState::STREAMING), static_cast<unsigned>(frame_count),
                          static_cast<unsigned>(invalid_frame_count), static_cast<unsigned>(publish_drop_count));
@@ -1001,32 +1010,20 @@ void HalEsp32::startCameraCapture(lv_obj_t* imgCanvas)
 
 void HalEsp32::stopCameraCapture()
 {
-    TaskHandle_t task_handle = nullptr;
-    SemaphoreHandle_t task_exited = nullptr;
     lv_obj_t* canvas = nullptr;
 
     {
         std::lock_guard<std::mutex> lock(camera_ctx.mutex);
         if (camera_ctx.task_handle == nullptr || camera_ctx.state == CameraState::CLOSED ||
-            camera_ctx.state == CameraState::ERROR) {
+            camera_ctx.state == CameraState::ERROR || camera_ctx.state == CameraState::STOPPING) {
             return;
         }
         camera_ctx.state = CameraState::STOPPING;
-        task_handle = camera_ctx.task_handle;
-        task_exited = camera_ctx.task_exited;
         canvas = camera_ctx.canvas;
     }
 
     ESP_LOGI(TAG, "Camera stop requested");
     camera_canvas_detach(canvas);
-    xTaskNotifyGive(task_handle);
-
-    if (task_exited == nullptr ||
-        xSemaphoreTake(task_exited, pdMS_TO_TICKS(CAMERA_STOP_TIMEOUT_MS)) != pdTRUE) {
-        ESP_LOGE(TAG, "Camera stop timed out after %u ms", CAMERA_STOP_TIMEOUT_MS);
-        return;
-    }
-    ESP_LOGI(TAG, "Camera stop completed");
 }
 
 bool HalEsp32::isCameraCapturing()

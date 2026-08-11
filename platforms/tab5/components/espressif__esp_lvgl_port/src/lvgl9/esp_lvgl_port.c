@@ -220,6 +220,10 @@ IRAM_ATTR bool lvgl_port_task_notify(uint32_t value)
  * Private functions
  *******************************************************************************/
 
+/*
+ * LVGL diagnostic field:
+ * - stack_hwm_bytes: minimum free task stack observed since task creation.
+ */
 static void lvgl_port_task(void *arg)
 {
     TaskHandle_t task_to_notify = (TaskHandle_t)arg;
@@ -242,7 +246,7 @@ static void lvgl_port_task(void *arg)
     /* Tick init */
     lvgl_port_tick_init();
 
-    ESP_LOGI(TAG, "Starting LVGL task: priority=%u core=%d stack_hwm=%u",
+    ESP_LOGI(TAG, "Starting LVGL task: priority=%u core=%d stack_hwm_bytes=%u",
              (unsigned)uxTaskPriorityGet(NULL), xPortGetCoreID(),
              (unsigned)uxTaskGetStackHighWaterMark(NULL));
     lvgl_port_ctx.running = true;
@@ -276,7 +280,7 @@ static void lvgl_port_task(void *arg)
 
         TickType_t now = xTaskGetTickCount();
         if ((now - last_stack_log_tick) >= pdMS_TO_TICKS(5000)) {
-            ESP_LOGI(TAG, "LVGL task stack_hwm=%u", (unsigned)uxTaskGetStackHighWaterMark(NULL));
+            ESP_LOGI(TAG, "LVGL task stack_hwm_bytes=%u", (unsigned)uxTaskGetStackHighWaterMark(NULL));
             last_stack_log_tick = now;
         }
 
