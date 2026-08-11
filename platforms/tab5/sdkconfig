@@ -4926,38 +4926,6 @@ CONFIG_AUDIO_PLAYER_LOG_LEVEL=0
 # end of Audio playback
 
 #
-# Audio Codec Device Configuration
-#
-# CONFIG_CODEC_I2C_BACKWARD_COMPATIBLE is not set
-# default:
-CONFIG_CODEC_ES8311_SUPPORT=y
-# default:
-CONFIG_CODEC_ES7210_SUPPORT=y
-# default:
-CONFIG_CODEC_ES7243_SUPPORT=y
-# default:
-CONFIG_CODEC_ES7243E_SUPPORT=y
-# default:
-CONFIG_CODEC_ES8156_SUPPORT=y
-# default:
-CONFIG_CODEC_AW88298_SUPPORT=y
-# default:
-CONFIG_CODEC_ES8389_SUPPORT=y
-# default:
-CONFIG_CODEC_ES8374_SUPPORT=y
-# default:
-CONFIG_CODEC_ES8388_SUPPORT=y
-# default:
-CONFIG_CODEC_TAS5805M_SUPPORT=y
-# default:
-# CONFIG_CODEC_ZL38063_SUPPORT is not set
-# default:
-# CONFIG_CODEC_CJC8910_SUPPORT is not set
-# default:
-CONFIG_CODEC_DUMMY_SUPPORT=y
-# end of Audio Codec Device Configuration
-
-#
 # Board Support Package (ESP32-P4)
 #
 # default:
@@ -5187,6 +5155,40 @@ CONFIG_CAMERA_SENSOR_MOTOR_DETECT_METHOD_DYNAMIC_LINK=y
 # default:
 # CONFIG_CAMERA_SENSOR_MOTOR_DETECT_METHOD_STATIC_STORE is not set
 # end of Espressif Camera Sensors Configurations
+
+#
+# Audio Codec Device Configuration
+#
+# CONFIG_CODEC_I2C_BACKWARD_COMPATIBLE is not set
+# default:
+CONFIG_CODEC_ES8311_SUPPORT=y
+# default:
+CONFIG_CODEC_ES7210_SUPPORT=y
+# default:
+CONFIG_CODEC_ES7243_SUPPORT=y
+# default:
+CONFIG_CODEC_ES7243E_SUPPORT=y
+# default:
+CONFIG_CODEC_ES8156_SUPPORT=y
+# default:
+CONFIG_CODEC_AW88298_SUPPORT=y
+# default:
+CONFIG_CODEC_ES8389_SUPPORT=y
+# default:
+CONFIG_CODEC_ES8374_SUPPORT=y
+# default:
+CONFIG_CODEC_ES8388_SUPPORT=y
+# default:
+CONFIG_CODEC_TAS5805M_SUPPORT=y
+# default:
+# CONFIG_CODEC_ZL38063_SUPPORT is not set
+# default:
+# CONFIG_CODEC_CJC8910_SUPPORT is not set
+# default:
+CONFIG_CODEC_DUMMY_SUPPORT=y
+# default:
+# CONFIG_CODEC_DATA_ADC_SUPPORT is not set
+# end of Audio Codec Device Configuration
 
 #
 # ESP H264 Configuration
