@@ -30,12 +30,15 @@
 static const char* TAG = "camera";
 
 #define EXAMPLE_VIDEO_BUFFER_COUNT 2
+#define CAMERA_DISPLAY_BUFFER_COUNT 2
 #define MEMORY_TYPE                V4L2_MEMORY_MMAP
 #define CAM_DEV_PATH               ESP_VIDEO_MIPI_CSI_DEVICE_NAME
 #define CAMERA_TASK_STACK_SIZE     (8 * 1024)
 #define CAMERA_TASK_PRIORITY       5
 #define CAMERA_STOP_TIMEOUT_MS     2000
 #define CAMERA_STACK_LOG_MS        5000
+#define CAMERA_REFRESH_TIMEOUT_MS   1000
+#define CAMERA_INVALID_LOG_INTERVAL 30
 #ifndef ARRAY_SIZE
 #define ARRAY_SIZE(arr) (sizeof(arr) / sizeof(arr[0]))
 #endif
@@ -45,6 +48,8 @@ typedef struct cam {
     uint32_t width;
     uint32_t height;
     uint32_t pixel_format;
+    uint32_t bytes_per_line;
+    uint32_t size_image;
     uint8_t* buffer[EXAMPLE_VIDEO_BUFFER_COUNT];
     size_t buffer_length[EXAMPLE_VIDEO_BUFFER_COUNT];
     uint32_t buffer_count;
@@ -74,13 +79,19 @@ struct CameraContext {
     CameraState state = CameraState::CLOSED;
     TaskHandle_t task_handle = nullptr;
     SemaphoreHandle_t task_exited = nullptr;
+    SemaphoreHandle_t refresh_done = nullptr;
     lv_obj_t* canvas = nullptr;
+    lv_display_t* display = nullptr;
     esp_err_t last_error = ESP_OK;
     bool video_initialized = false;
     bool canvas_uses_display_buffer = false;
+    bool refresh_callback_registered = false;
+    bool refresh_pending = false;
     cam_t* camera = nullptr;
     ppa_client_handle_t ppa_handle = nullptr;
-    uint8_t* display_buffer = nullptr;
+    uint8_t* display_buffers[CAMERA_DISPLAY_BUFFER_COUNT] = {};
+    uint8_t* front_buffer = nullptr;
+    uint8_t* back_buffer = nullptr;
 };
 
 static CameraContext camera_ctx;
@@ -125,9 +136,114 @@ static bool camera_mark_streaming()
     return true;
 }
 
-static bool camera_canvas_attach(lv_obj_t* canvas, uint8_t* display_buffer)
+static void camera_display_refresh_ready_cb(lv_event_t* event)
 {
-    if (canvas == nullptr || display_buffer == nullptr) {
+    auto* context = static_cast<CameraContext*>(lv_event_get_user_data(event));
+    if (context == nullptr || lv_event_get_code(event) != LV_EVENT_REFR_READY) {
+        return;
+    }
+
+    SemaphoreHandle_t refresh_done = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(context->mutex);
+        if (context->refresh_callback_registered && context->refresh_pending) {
+            context->refresh_pending = false;
+            refresh_done = context->refresh_done;
+        }
+    }
+    if (refresh_done != nullptr) {
+        xSemaphoreGive(refresh_done);
+    }
+}
+
+static esp_err_t camera_register_refresh_callback(lv_obj_t* canvas)
+{
+    if (canvas == nullptr) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (!bsp_display_lock(100)) {
+        ESP_LOGE(TAG, "Timed out waiting for LVGL lock while registering refresh callback");
+        return ESP_ERR_TIMEOUT;
+    }
+
+    lv_display_t* display = lv_obj_get_display(canvas);
+    SemaphoreHandle_t refresh_done = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(camera_ctx.mutex);
+        refresh_done = camera_ctx.refresh_done;
+    }
+    if (display == nullptr || refresh_done == nullptr) {
+        bsp_display_unlock();
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    while (xSemaphoreTake(refresh_done, 0) == pdTRUE) {
+    }
+    lv_display_add_event_cb(display, camera_display_refresh_ready_cb, LV_EVENT_REFR_READY, &camera_ctx);
+    {
+        std::lock_guard<std::mutex> lock(camera_ctx.mutex);
+        camera_ctx.display = display;
+        camera_ctx.refresh_callback_registered = true;
+        camera_ctx.refresh_pending = false;
+    }
+    bsp_display_unlock();
+    return ESP_OK;
+}
+
+static void camera_unregister_refresh_callback()
+{
+    lv_display_t* display = nullptr;
+    bool registered = false;
+    SemaphoreHandle_t refresh_done = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(camera_ctx.mutex);
+        display = camera_ctx.display;
+        registered = camera_ctx.refresh_callback_registered;
+        refresh_done = camera_ctx.refresh_done;
+    }
+
+    if (registered && display != nullptr && bsp_display_lock(0)) {
+        lv_display_remove_event_cb_with_user_data(display, camera_display_refresh_ready_cb, &camera_ctx);
+        bsp_display_unlock();
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(camera_ctx.mutex);
+        camera_ctx.refresh_callback_registered = false;
+        camera_ctx.refresh_pending = false;
+        camera_ctx.display = nullptr;
+    }
+    if (refresh_done != nullptr) {
+        xSemaphoreGive(refresh_done);
+    }
+}
+
+static esp_err_t camera_wait_for_refresh_ready()
+{
+    SemaphoreHandle_t refresh_done = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(camera_ctx.mutex);
+        refresh_done = camera_ctx.refresh_done;
+    }
+    if (refresh_done == nullptr) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    const TickType_t start_tick = xTaskGetTickCount();
+    while (!camera_stop_requested()) {
+        if (xSemaphoreTake(refresh_done, pdMS_TO_TICKS(20)) == pdTRUE) {
+            return ESP_OK;
+        }
+        if ((xTaskGetTickCount() - start_tick) >= pdMS_TO_TICKS(CAMERA_REFRESH_TIMEOUT_MS)) {
+            return ESP_ERR_TIMEOUT;
+        }
+    }
+    return ESP_ERR_INVALID_STATE;
+}
+
+static bool camera_canvas_attach(lv_obj_t* canvas, uint8_t* front_buffer, uint8_t* next_back_buffer)
+{
+    if (canvas == nullptr || front_buffer == nullptr || next_back_buffer == nullptr) {
         return false;
     }
     if (!bsp_display_lock(100)) {
@@ -135,12 +251,27 @@ static bool camera_canvas_attach(lv_obj_t* canvas, uint8_t* display_buffer)
         return false;
     }
 
+    SemaphoreHandle_t refresh_done = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(camera_ctx.mutex);
+        refresh_done = camera_ctx.refresh_done;
+    }
+    if (refresh_done != nullptr) {
+        while (xSemaphoreTake(refresh_done, 0) == pdTRUE) {
+        }
+    }
+
     bool attached = false;
     {
         std::lock_guard<std::mutex> lock(camera_ctx.mutex);
-        if (camera_ctx.state == CameraState::STREAMING && camera_ctx.canvas == canvas) {
-            lv_canvas_set_buffer(canvas, display_buffer, CAMERA_WIDTH, CAMERA_HEIGHT, LV_COLOR_FORMAT_RGB565);
+        if (camera_ctx.state == CameraState::STREAMING && camera_ctx.canvas == canvas &&
+            camera_ctx.refresh_callback_registered) {
+            lv_canvas_set_buffer(canvas, front_buffer, CAMERA_WIDTH, CAMERA_HEIGHT, LV_COLOR_FORMAT_RGB565);
+            lv_obj_invalidate(canvas);
             camera_ctx.canvas_uses_display_buffer = true;
+            camera_ctx.refresh_pending = true;
+            camera_ctx.front_buffer = front_buffer;
+            camera_ctx.back_buffer = next_back_buffer;
             attached = true;
         }
     }
@@ -160,13 +291,24 @@ static void camera_canvas_detach(lv_obj_t* canvas)
         return;
     }
     lv_canvas_set_buffer(canvas, &camera_canvas_placeholder, 1, 1, LV_COLOR_FORMAT_RGB565);
+    lv_obj_invalidate(canvas);
+
+    SemaphoreHandle_t refresh_done = nullptr;
     {
         std::lock_guard<std::mutex> lock(camera_ctx.mutex);
         if (camera_ctx.canvas == canvas) {
             camera_ctx.canvas_uses_display_buffer = false;
+            camera_ctx.refresh_pending = false;
+            camera_ctx.front_buffer = nullptr;
+            camera_ctx.back_buffer = nullptr;
+            refresh_done = camera_ctx.refresh_done;
         }
     }
     bsp_display_unlock();
+
+    if (refresh_done != nullptr) {
+        xSemaphoreGive(refresh_done);
+    }
 }
 
 static bool camera_canvas_needs_detach()
@@ -313,6 +455,12 @@ static esp_err_t new_cam(int cam_fd, cam_t** ret_camera)
     camera->width = format.fmt.pix.width;
     camera->height = format.fmt.pix.height;
     camera->pixel_format = format.fmt.pix.pixelformat;
+    camera->bytes_per_line = format.fmt.pix.bytesperline;
+    camera->size_image = format.fmt.pix.sizeimage;
+    ESP_LOGI(TAG,
+             "Camera format: width=%" PRIu32 " height=%" PRIu32 " format=0x%08" PRIx32
+             " bytesperline=%" PRIu32 " sizeimage=%" PRIu32,
+             camera->width, camera->height, camera->pixel_format, camera->bytes_per_line, camera->size_image);
 
     struct v4l2_requestbuffers req = {};
     req.count = ARRAY_SIZE(camera->buffer);
@@ -339,7 +487,7 @@ static esp_err_t new_cam(int cam_fd, cam_t** ret_camera)
         }
 
         void* mapped = mmap(nullptr, buf.length, PROT_READ | PROT_WRITE, MAP_SHARED, camera->fd, buf.m.offset);
-        if (mapped == nullptr) {
+        if (mapped == MAP_FAILED) {
             ESP_LOGE(TAG, "Failed to map camera buffer %" PRIu32 ": errno=%d (%s)", i, errno,
                      strerror(errno));
             delete_cam(&camera);
@@ -412,7 +560,14 @@ static void camera_task_finish(esp_err_t result)
         camera_ctx.last_error = result;
         camera_ctx.camera = nullptr;
         camera_ctx.ppa_handle = nullptr;
-        camera_ctx.display_buffer = nullptr;
+        for (uint32_t i = 0; i < CAMERA_DISPLAY_BUFFER_COUNT; ++i) {
+            camera_ctx.display_buffers[i] = nullptr;
+        }
+        camera_ctx.front_buffer = nullptr;
+        camera_ctx.back_buffer = nullptr;
+        camera_ctx.display = nullptr;
+        camera_ctx.refresh_callback_registered = false;
+        camera_ctx.refresh_pending = false;
         camera_ctx.canvas_uses_display_buffer = false;
         camera_ctx.canvas = nullptr;
         camera_ctx.task_handle = nullptr;
@@ -435,10 +590,17 @@ static void app_camera_display(void* arg)
     esp_err_t cleanup_result = ESP_OK;
     cam_t* camera = nullptr;
     ppa_client_handle_t ppa_handle = nullptr;
-    uint8_t* display_buffer = nullptr;
+    uint8_t* display_buffers[CAMERA_DISPLAY_BUFFER_COUNT] = {};
+    uint8_t* front_buffer = nullptr;
+    uint8_t* back_buffer = nullptr;
     lv_obj_t* canvas = nullptr;
     uint32_t frame_count = 0;
+    uint32_t invalid_frame_count = 0;
+    uint32_t publish_drop_count = 0;
+    bool refresh_wait_pending = false;
     TickType_t last_stack_log_tick = xTaskGetTickCount();
+    const size_t expected_line_size = CAMERA_WIDTH * sizeof(uint16_t);
+    const size_t expected_frame_size = expected_line_size * CAMERA_HEIGHT;
 
     {
         std::lock_guard<std::mutex> lock(camera_ctx.mutex);
@@ -483,22 +645,56 @@ static void app_camera_display(void* arg)
             result = ESP_ERR_INVALID_SIZE;
             break;
         }
-        if (camera_stop_requested()) {
+        if (camera->bytes_per_line != 0 && camera->bytes_per_line != expected_line_size) {
+            ESP_LOGE(TAG, "Unsupported camera stride: bytesperline=%" PRIu32 " expected=%u",
+                     camera->bytes_per_line, static_cast<unsigned>(expected_line_size));
+            result = ESP_ERR_INVALID_SIZE;
+            break;
+        }
+        if (camera->size_image != 0 && camera->size_image < expected_frame_size) {
+            ESP_LOGE(TAG, "Camera sizeimage is too small: sizeimage=%" PRIu32 " expected=%u",
+                     camera->size_image, static_cast<unsigned>(expected_frame_size));
+            result = ESP_ERR_INVALID_SIZE;
+            break;
+        }
+        for (uint32_t i = 0; i < camera->buffer_count; ++i) {
+            if (camera->buffer_length[i] < expected_frame_size) {
+                ESP_LOGE(TAG, "Camera buffer %" PRIu32 " is too small: length=%u expected=%u", i,
+                         static_cast<unsigned>(camera->buffer_length[i]),
+                         static_cast<unsigned>(expected_frame_size));
+                result = ESP_ERR_INVALID_SIZE;
+                break;
+            }
+        }
+        if (result != ESP_OK || camera_stop_requested()) {
             break;
         }
 
-        const size_t display_buffer_size = CAMERA_WIDTH * CAMERA_HEIGHT * sizeof(uint16_t);
-        display_buffer = static_cast<uint8_t*>(
-            heap_caps_calloc(display_buffer_size, 1, MALLOC_CAP_DMA | MALLOC_CAP_SPIRAM));
-        if (display_buffer == nullptr) {
-            ESP_LOGE(TAG, "Failed to allocate camera display buffer (%u bytes)",
-                     static_cast<unsigned>(display_buffer_size));
-            result = ESP_ERR_NO_MEM;
+        ESP_LOGI(TAG, "Allocating %u camera display buffers, %u bytes each; SPIRAM free=%u largest=%u",
+                 CAMERA_DISPLAY_BUFFER_COUNT, static_cast<unsigned>(expected_frame_size),
+                 static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)),
+                 static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM)));
+        for (uint32_t i = 0; i < CAMERA_DISPLAY_BUFFER_COUNT; ++i) {
+            display_buffers[i] = static_cast<uint8_t*>(
+                heap_caps_calloc(expected_frame_size, 1, MALLOC_CAP_DMA | MALLOC_CAP_SPIRAM));
+            if (display_buffers[i] == nullptr) {
+                ESP_LOGE(TAG, "Failed to allocate camera display buffer %" PRIu32 " (%u bytes)", i,
+                         static_cast<unsigned>(expected_frame_size));
+                result = ESP_ERR_NO_MEM;
+                break;
+            }
+        }
+        if (result != ESP_OK) {
             break;
         }
+        back_buffer = display_buffers[0];
         {
             std::lock_guard<std::mutex> lock(camera_ctx.mutex);
-            camera_ctx.display_buffer = display_buffer;
+            for (uint32_t i = 0; i < CAMERA_DISPLAY_BUFFER_COUNT; ++i) {
+                camera_ctx.display_buffers[i] = display_buffers[i];
+            }
+            camera_ctx.front_buffer = nullptr;
+            camera_ctx.back_buffer = back_buffer;
         }
 
         ppa_client_config_t ppa_config = {
@@ -517,6 +713,12 @@ static void app_camera_display(void* arg)
             camera_ctx.ppa_handle = ppa_handle;
         }
 
+        result = camera_register_refresh_callback(canvas);
+        if (result != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to register LVGL refresh callback: %s", esp_err_to_name(result));
+            break;
+        }
+
         if (!camera_mark_streaming()) {
             if (!camera_stop_requested()) {
                 result = ESP_ERR_INVALID_STATE;
@@ -525,6 +727,22 @@ static void app_camera_display(void* arg)
         }
 
         while (!camera_stop_requested()) {
+            if (refresh_wait_pending) {
+                esp_err_t wait_result = camera_wait_for_refresh_ready();
+                if (wait_result != ESP_OK) {
+                    if (camera_stop_requested()) {
+                        break;
+                    }
+                    ESP_LOGE(TAG, "Timed out waiting for LVGL refresh completion");
+                    result = wait_result;
+                    break;
+                }
+                refresh_wait_pending = false;
+                if (camera_stop_requested()) {
+                    break;
+                }
+            }
+
             struct v4l2_buffer buf = {};
             buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
             buf.memory = MEMORY_TYPE;
@@ -534,9 +752,11 @@ static void app_camera_display(void* arg)
                 if (dq_errno == ETIMEDOUT || dq_errno == EAGAIN || dq_errno == EINTR) {
                     TickType_t now = xTaskGetTickCount();
                     if ((now - last_stack_log_tick) >= pdMS_TO_TICKS(CAMERA_STACK_LOG_MS)) {
-                        ESP_LOGI(TAG, "Camera task stack_hwm=%u state=%s frames=%u",
+                        ESP_LOGI(TAG, "Camera task stack_hwm=%u state=%s frames=%u invalid=%u publish_drop=%u",
                                  static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)),
-                                 camera_state_name(CameraState::STREAMING), static_cast<unsigned>(frame_count));
+                                 camera_state_name(CameraState::STREAMING), static_cast<unsigned>(frame_count),
+                                 static_cast<unsigned>(invalid_frame_count),
+                                 static_cast<unsigned>(publish_drop_count));
                         last_stack_log_tick = now;
                     }
                     continue;
@@ -553,8 +773,27 @@ static void app_camera_display(void* arg)
                 break;
             }
 
-            bool requeue_buffer = true;
-            if (!camera_stop_requested()) {
+            const size_t mapped_length = camera->buffer_length[buf.index];
+            const size_t dequeued_length = buf.length != 0 ? buf.length : mapped_length;
+            const bool driver_error = (buf.flags & V4L2_BUF_FLAG_ERROR) != 0;
+            const bool invalid_length = dequeued_length < expected_frame_size || dequeued_length > mapped_length ||
+                                        buf.bytesused < expected_frame_size || buf.bytesused > dequeued_length;
+            const bool frame_valid = !driver_error && !invalid_length;
+            bool frame_published = false;
+
+            if (!frame_valid) {
+                ++invalid_frame_count;
+                if (invalid_frame_count == 1 ||
+                    (invalid_frame_count % CAMERA_INVALID_LOG_INTERVAL) == 0) {
+                    ESP_LOGW(TAG,
+                             "Dropping invalid camera frame: count=%u index=%u flags=0x%08x bytesused=%u "
+                             "expected=%u dequeued=%u mapped=%u",
+                             static_cast<unsigned>(invalid_frame_count), static_cast<unsigned>(buf.index),
+                             static_cast<unsigned>(buf.flags), static_cast<unsigned>(buf.bytesused),
+                             static_cast<unsigned>(expected_frame_size), static_cast<unsigned>(dequeued_length),
+                             static_cast<unsigned>(mapped_length));
+                }
+            } else if (!camera_stop_requested()) {
                 ppa_srm_oper_config_t srm_config = {
                     .in = {
                         .buffer = camera->buffer[buf.index],
@@ -569,8 +808,8 @@ static void app_camera_display(void* arg)
                         .yuv_std = PPA_COLOR_CONV_STD_RGB_YUV_BT601,
                     },
                     .out = {
-                        .buffer = display_buffer,
-                        .buffer_size = CAMERA_WIDTH * CAMERA_HEIGHT * sizeof(uint16_t),
+                        .buffer = back_buffer,
+                        .buffer_size = expected_frame_size,
                         .pic_w = CAMERA_WIDTH,
                         .pic_h = CAMERA_HEIGHT,
                         .block_offset_x = 0,
@@ -596,11 +835,25 @@ static void app_camera_display(void* arg)
                 if (result != ESP_OK) {
                     ESP_LOGE(TAG, "PPA processing failed: %s", esp_err_to_name(result));
                 } else {
-                    camera_canvas_attach(canvas, display_buffer);
+                    uint8_t* previous_front = front_buffer;
+                    uint8_t* next_back = previous_front != nullptr ? previous_front : display_buffers[1];
+                    if (camera_canvas_attach(canvas, back_buffer, next_back)) {
+                        front_buffer = back_buffer;
+                        back_buffer = next_back;
+                        refresh_wait_pending = true;
+                        frame_published = true;
+                    } else if (!camera_stop_requested()) {
+                        ++publish_drop_count;
+                        if (publish_drop_count == 1 ||
+                            (publish_drop_count % CAMERA_INVALID_LOG_INTERVAL) == 0) {
+                            ESP_LOGW(TAG, "Dropping camera frame because Canvas publish failed: count=%u",
+                                     static_cast<unsigned>(publish_drop_count));
+                        }
+                    }
                 }
             }
 
-            if (requeue_buffer && ioctl(camera->fd, VIDIOC_QBUF, &buf) != 0) {
+            if (ioctl(camera->fd, VIDIOC_QBUF, &buf) != 0) {
                 ESP_LOGE(TAG, "VIDIOC_QBUF failed: errno=%d (%s)", errno, strerror(errno));
                 if (result == ESP_OK) {
                     result = ESP_FAIL;
@@ -609,6 +862,9 @@ static void app_camera_display(void* arg)
             }
             if (result != ESP_OK) {
                 break;
+            }
+            if (!frame_published) {
+                continue;
             }
 
             ++frame_count;
@@ -619,12 +875,12 @@ static void app_camera_display(void* arg)
 
             TickType_t now = xTaskGetTickCount();
             if ((now - last_stack_log_tick) >= pdMS_TO_TICKS(CAMERA_STACK_LOG_MS)) {
-                ESP_LOGI(TAG, "Camera task stack_hwm=%u state=%s frames=%u",
+                ESP_LOGI(TAG, "Camera task stack_hwm=%u state=%s frames=%u invalid=%u publish_drop=%u",
                          static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)),
-                         camera_state_name(CameraState::STREAMING), static_cast<unsigned>(frame_count));
+                         camera_state_name(CameraState::STREAMING), static_cast<unsigned>(frame_count),
+                         static_cast<unsigned>(invalid_frame_count), static_cast<unsigned>(publish_drop_count));
                 last_stack_log_tick = now;
             }
-            vTaskDelay(pdMS_TO_TICKS(10));
         }
     } while (false);
 
@@ -638,6 +894,7 @@ static void app_camera_display(void* arg)
     if (camera_canvas_needs_detach()) {
         camera_canvas_detach(canvas);
     }
+    camera_unregister_refresh_callback();
 
     if (ppa_handle != nullptr) {
         cleanup_result = ppa_unregister_client(ppa_handle);
@@ -650,9 +907,19 @@ static void app_camera_display(void* arg)
         ppa_handle = nullptr;
     }
 
-    if (display_buffer != nullptr) {
-        heap_caps_free(display_buffer);
-        display_buffer = nullptr;
+    for (uint32_t i = 0; i < CAMERA_DISPLAY_BUFFER_COUNT; ++i) {
+        if (display_buffers[i] != nullptr) {
+            heap_caps_free(display_buffers[i]);
+            display_buffers[i] = nullptr;
+        }
+    }
+    {
+        std::lock_guard<std::mutex> lock(camera_ctx.mutex);
+        for (uint32_t i = 0; i < CAMERA_DISPLAY_BUFFER_COUNT; ++i) {
+            camera_ctx.display_buffers[i] = nullptr;
+        }
+        camera_ctx.front_buffer = nullptr;
+        camera_ctx.back_buffer = nullptr;
     }
 
     cleanup_result = delete_cam(&camera);
@@ -660,8 +927,9 @@ static void app_camera_display(void* arg)
         result = cleanup_result;
     }
 
-    ESP_LOGI(TAG, "TAB5X_CAMERA_DRIVER_TEST_%s frames=%u",
-             (frame_count > 0 && result == ESP_OK) ? "PASS" : "FAIL", static_cast<unsigned>(frame_count));
+    ESP_LOGI(TAG, "TAB5X_CAMERA_DRIVER_TEST_%s frames=%u invalid=%u publish_drop=%u",
+             (frame_count > 0 && result == ESP_OK) ? "PASS" : "FAIL", static_cast<unsigned>(frame_count),
+             static_cast<unsigned>(invalid_frame_count), static_cast<unsigned>(publish_drop_count));
     camera_task_finish(result);
 }
 
@@ -688,15 +956,33 @@ void HalEsp32::startCameraCapture(lv_obj_t* imgCanvas)
             return;
         }
     }
+    if (camera_ctx.refresh_done == nullptr) {
+        camera_ctx.refresh_done = xSemaphoreCreateBinary();
+        if (camera_ctx.refresh_done == nullptr) {
+            camera_ctx.last_error = ESP_ERR_NO_MEM;
+            camera_ctx.state = CameraState::ERROR;
+            ESP_LOGE(TAG, "Failed to create camera refresh semaphore");
+            return;
+        }
+    }
     while (xSemaphoreTake(camera_ctx.task_exited, 0) == pdTRUE) {
+    }
+    while (xSemaphoreTake(camera_ctx.refresh_done, 0) == pdTRUE) {
     }
 
     camera_ctx.canvas = imgCanvas;
+    camera_ctx.display = nullptr;
     camera_ctx.last_error = ESP_OK;
     camera_ctx.canvas_uses_display_buffer = false;
+    camera_ctx.refresh_callback_registered = false;
+    camera_ctx.refresh_pending = false;
     camera_ctx.camera = nullptr;
     camera_ctx.ppa_handle = nullptr;
-    camera_ctx.display_buffer = nullptr;
+    for (uint32_t i = 0; i < CAMERA_DISPLAY_BUFFER_COUNT; ++i) {
+        camera_ctx.display_buffers[i] = nullptr;
+    }
+    camera_ctx.front_buffer = nullptr;
+    camera_ctx.back_buffer = nullptr;
     camera_ctx.state = CameraState::STARTING;
 
     TaskHandle_t task_handle = nullptr;

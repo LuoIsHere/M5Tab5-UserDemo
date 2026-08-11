@@ -10,6 +10,7 @@
 #include <memory>
 #include "driver/uart.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 
 #define TAG "hal_rs485"
 
@@ -18,6 +19,8 @@
 // Timeout threshold for UART = number of symbols (~10 tics) with unchanged state on receive pin
 #define TAB5_RS485_READ_TOUT        (3)  // 3.5T * 8 = 28 ticks, TOUT=3 -> ~24..33 ticks
 #define TAB5_RS485_PACKET_READ_TICS (100 / portTICK_PERIOD_MS)
+#define TAB5_RS485_TASK_STACK_SIZE   (4 * 1024)
+#define TAB5_RS485_DIAG_INTERVAL_MS  5000
 static uart_port_t tab5_rs485_uart_num = UART_NUM_1;
 
 #define TAB5_SYS_RS485_TX_PIN 20
@@ -35,22 +38,20 @@ static void tab5_rs485_echo_send(const int port, uint8_t* str, uint8_t length)
 
 static void _rs485_test_task(void* param)
 {
-    // Allocate buffers for UART
-    uint8_t* data  = (uint8_t*)malloc(TAB5_RS485_BUF_SIZE);
-    uint8_t* wdata = (uint8_t*)malloc(TAB5_RS485_BUF_SIZE);
+    (void)param;
+    uint8_t data[TAB5_RS485_BUF_SIZE];
+    TickType_t last_diag_tick = xTaskGetTickCount();
 
-    int count               = 0;
-    uint64_t last_send_time = 0;
+    ESP_LOGI(TAG, "RS485 task started: priority=%u core=%d stack_hwm=%u",
+             static_cast<unsigned>(uxTaskPriorityGet(nullptr)), xPortGetCoreID(),
+             static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
+
     while (1) {
-        // Read data from UART
-        memset(data, 0, TAB5_RS485_BUF_SIZE);
-        int len = uart_read_bytes(tab5_rs485_uart_num, data, TAB5_RS485_BUF_SIZE, TAB5_RS485_PACKET_READ_TICS);
-
-        // Write data back to UART
-        if (len > 0) {
-            // printf("Received [%u] : %s\n", len, data);
-            // tab5_rs485_echo_send(tab5_rs485_uart_num, data, len);
-
+        // uart_read_bytes() returns the valid byte count, so clearing the whole buffer is unnecessary.
+        int len = uart_read_bytes(tab5_rs485_uart_num, data, sizeof(data), TAB5_RS485_PACKET_READ_TICS);
+        if (len < 0) {
+            ESP_LOGE(TAG, "UART read failed: %d", len);
+        } else if (len > 0) {
             std::lock_guard<std::mutex> lock(GetHAL()->uartMonitorData.mutex);
             for (int i = 0; i < len; i++) {
                 GetHAL()->uartMonitorData.rxQueue.push(data[i]);
@@ -69,7 +70,17 @@ static void _rs485_test_task(void* param)
             }
         }
 
-        vTaskDelay(10 / portTICK_PERIOD_MS);
+        TickType_t now = xTaskGetTickCount();
+        if ((now - last_diag_tick) >= pdMS_TO_TICKS(TAB5_RS485_DIAG_INTERVAL_MS)) {
+            const bool heap_ok = heap_caps_check_integrity_all(true);
+            ESP_LOGI(TAG, "RS485 diagnostics: stack_hwm=%u heap_ok=%d free_internal=%u free_spiram=%u",
+                     static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)), heap_ok,
+                     static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
+                     static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)));
+            last_diag_tick = now;
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
 
@@ -105,5 +116,9 @@ void HalEsp32::rs485_init()
     // Set read timeout of UART TOUT feature
     ESP_ERROR_CHECK(uart_set_rx_timeout(tab5_rs485_uart_num, TAB5_RS485_READ_TOUT));
 
-    xTaskCreate(_rs485_test_task, "rs485", 2000, NULL, 5, NULL);
+    BaseType_t task_result =
+        xTaskCreate(_rs485_test_task, "rs485", TAB5_RS485_TASK_STACK_SIZE, nullptr, 5, nullptr);
+    if (task_result != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create RS485 task");
+    }
 }
