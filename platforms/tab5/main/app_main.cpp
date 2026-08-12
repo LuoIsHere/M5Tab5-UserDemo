@@ -3,6 +3,11 @@
  *
  * SPDX-License-Identifier: MIT
  */
+#include "sdkconfig.h"
+
+#if CONFIG_TAB5X_BOOT_MODE_MP3_ISOLATED
+#include "diagnostics/boot_mp3/boot_mp3_test.h"
+#else
 #include "hal/hal_esp32.h"
 #include <app.h>
 #include <hal/hal.h>
@@ -157,8 +162,13 @@ static void driver_smoke_test_task(void*)
 }
 #endif
 
+#endif
+
 extern "C" void app_main(void)
 {
+#if CONFIG_TAB5X_BOOT_MODE_MP3_ISOLATED
+    tab5_boot_mp3_test_run();
+#else
     // 应用层初始化回调
     app::InitCallback_t callback;
 
@@ -178,4 +188,5 @@ extern "C" void app_main(void)
         vTaskDelay(1);
     }
     app::Destroy();
+#endif
 }

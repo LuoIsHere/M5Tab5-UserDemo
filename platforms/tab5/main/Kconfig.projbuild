@@ -1,7 +1,48 @@
 menu "Tab5X test options"
 
+choice TAB5X_BOOT_MODE
+    prompt "Tab5X boot operating mode"
+    default TAB5X_BOOT_MODE_NORMAL
+    help
+        Select the normal product application or the isolated MP3 playback
+        diagnostic entry. The two modes are mutually exclusive.
+
+config TAB5X_BOOT_MODE_NORMAL
+    bool "Normal application mode"
+    help
+        Start the complete Tab5X application, including the UI and normal
+        peripheral services.
+
+config TAB5X_BOOT_MODE_MP3_ISOLATED
+    bool "Isolated MP3 playback diagnostic mode"
+    depends on AUDIO_PLAYER_ENABLE_MP3
+    help
+        Start only the board I2C, speaker enable path, codec, audio player,
+        MP3 decoder, and I2S output. Normal UI and application tasks are not
+        compiled into the main component in this mode.
+
+endchoice
+
+config TAB5X_BOOT_MP3_REPEAT
+    bool "Repeat isolated MP3 playback"
+    depends on TAB5X_BOOT_MODE_MP3_ISOLATED
+    default n
+    help
+        Recreate the audio player and replay the embedded canon_in_d.mp3
+        after a one-second pause. This is useful for observing heap leaks or
+        fragmentation across repeated player lifecycles.
+
+config TAB5X_BOOT_MP3_VOLUME
+    int "Isolated MP3 playback volume"
+    depends on TAB5X_BOOT_MODE_MP3_ISOLATED
+    range 0 100
+    default 80
+    help
+        Speaker volume used by the isolated MP3 diagnostic mode.
+
 config TAB5X_DRIVER_SMOKE_TEST
     bool "Run camera and audio driver smoke tests at boot"
+    depends on TAB5X_BOOT_MODE_NORMAL
     default n
     help
         After normal startup, run one audio record/playback cycle and capture
