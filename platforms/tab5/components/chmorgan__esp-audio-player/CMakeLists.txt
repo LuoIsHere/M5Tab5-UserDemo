@@ -20,6 +20,10 @@ if(CONFIG_AUDIO_PLAYER_ENABLE_MP3)
     list(APPEND srcs "audio_mp3.cpp")
 endif()
 
+if(CONFIG_TAB5X_MP3_DECODE_DIAGNOSTICS)
+    list(APPEND requires esp_timer heap esp_hw_support)
+endif()
+
 # TODO: move inside of the 'if(CONFIG_AUDIO_PLAYER_ENABLE_MP3)' when everything builds correctly
 list(APPEND requires "esp-libhelix-mp3")
 

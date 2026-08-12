@@ -79,22 +79,25 @@ public:
 
     void onUpdate() override
     {
-        // Record and plot
-        if (_chart_aec) {
-            GetHAL()->audioRecord(_record_data, 4, 20);  // 48000 * 4 / 1000 = 192
-            // [MIC-L, AEC, MIC-R, MIC-HP]
-            for (int i = 0; i < _record_data.size(); i += 4) {
-                _chart_aec->setNextValue(0, _record_data[i + 1]);
-            }
-        }
-
         if (_state != Opened) {
             return;
         }
 
-        if (GetHAL()->millis() - _time_count > 200) {
+        const uint32_t now = GetHAL()->millis();
+
+        // Limit capture and chart updates so playback keeps enough CPU/I2S time.
+        if (_chart_aec && now - _capture_time_count >= 20) {
+            GetHAL()->audioRecord(_record_data, 4, 20);  // 48000 * 4 / 1000 = 192
+            // [MIC-L, AEC, MIC-R, MIC-HP]
+            for (size_t i = 0; i + 1 < _record_data.size(); i += 4) {
+                _chart_aec->setNextValue(0, _record_data[i + 1]);
+            }
+            _capture_time_count = now;
+        }
+
+        if (now - _time_count > 200) {
             update_rec_button();
-            _time_count = GetHAL()->millis();
+            _time_count = now;
         }
     }
 
@@ -107,7 +110,8 @@ public:
     }
 
 private:
-    uint32_t _time_count = 0;
+    uint32_t _time_count         = 0;
+    uint32_t _capture_time_count = 0;
     std::vector<int16_t> _record_data;
     std::unique_ptr<Button> _rec_btn;
     std::unique_ptr<Spinner> _rec_btn_spinner;

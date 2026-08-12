@@ -272,6 +272,9 @@ static esp_err_t aplay_file(audio_instance_t *i, FILE *fp) {
     TickType_t last_stack_log_tick = xTaskGetTickCount();
 
     FILE_TYPE file_type = FILE_TYPE_UNKNOWN;
+#if defined(CONFIG_TAB5X_MP3_DECODE_DIAGNOSTICS)
+    bool mp3_diag_session_started = false;
+#endif
 
 #if defined(CONFIG_AUDIO_PLAYER_ENABLE_MP3)
     if(is_mp3(fp)) {
@@ -282,6 +285,10 @@ static esp_err_t aplay_file(audio_instance_t *i, FILE *fp) {
         i->mp3_data.bytes_in_data_buf = 0;
         i->mp3_data.read_ptr = i->mp3_data.data_buf;
         i->mp3_data.eof_reached = false;
+#if defined(CONFIG_TAB5X_MP3_DECODE_DIAGNOSTICS)
+        mp3_decode_diag_session_start(i->mp3_decoder, &i->output, &i->mp3_data);
+        mp3_diag_session_started = true;
+#endif
     }
 #endif
 
@@ -456,6 +463,12 @@ static esp_err_t aplay_file(audio_instance_t *i, FILE *fp) {
     } while (true);
 
 clean_up:
+#if defined(CONFIG_TAB5X_MP3_DECODE_DIAGNOSTICS)
+    if (mp3_diag_session_started) {
+        // The final cumulative report also covers short files that end before the periodic interval.
+        mp3_decode_diag_session_end(&i->mp3_data);
+    }
+#endif
     return ret;
 }
 

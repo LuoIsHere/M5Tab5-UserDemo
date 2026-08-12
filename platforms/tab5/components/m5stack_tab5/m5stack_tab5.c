@@ -6,6 +6,7 @@
 
 #include "sdkconfig.h"
 #include <inttypes.h>
+#include <string.h>
 #include "driver/gpio.h"
 #include "driver/ledc.h"
 #include "esp_err.h"
@@ -31,6 +32,8 @@
 #include "esp_lcd_touch_st7123.h"
 #include "bsp_err_check.h"
 #include "esp_codec_dev_defaults.h"
+#include "esp_heap_caps.h"
+#include "esp_timer.h"
 
 static const char* TAG = "M5STACK_TAB5";
 
@@ -699,6 +702,108 @@ static esp_codec_dev_sample_info_t play_dev_format;
 static bool play_dev_format_valid;
 static int volume;
 
+/* These retry limits are part of the full-write behavior and remain active when diagnostics are disabled. */
+#define BSP_AUDIO_TX_TRANSIENT_RETRY_US        (20LL * 1000)
+#define BSP_AUDIO_TX_MAX_ZERO_PROGRESS_RETRIES 20U
+
+#if defined(CONFIG_TAB5X_AUDIO_I2S_DIAGNOSTICS)
+#define BSP_AUDIO_TX_DIAG_REPORT_INTERVAL_US  (5LL * 1000 * 1000)
+#define BSP_AUDIO_TX_DIAG_SESSION_GAP_US      (2LL * 1000 * 1000)
+#define BSP_AUDIO_TX_SLOW_WRITE_US             (30LL * 1000)
+#define BSP_AUDIO_TX_LATE_FRAME_GAP_US         (30LL * 1000)
+
+typedef struct {
+    uint64_t frame_calls;
+    uint64_t requested_bytes;
+    uint64_t written_bytes;
+    uint64_t driver_calls;
+    uint32_t partial_driver_writes;
+    uint32_t multi_call_frames;
+    uint32_t zero_progress_retries;
+    uint32_t invalid_state_retries;
+    uint32_t timeout_errors;
+    uint32_t invalid_state_errors;
+    uint32_t other_errors;
+    uint32_t slow_write_frames;
+    uint32_t late_frame_gaps;
+    uint32_t max_driver_calls_per_frame;
+    int64_t max_lock_wait_us;
+    int64_t max_write_us;
+    int64_t max_frame_gap_us;
+    int64_t last_frame_start_us;
+    int64_t last_report_us;
+    bool first_frame_report_pending;
+} bsp_audio_tx_diag_t;
+
+static bsp_audio_tx_diag_t audio_tx_diag;
+
+static void bsp_audio_tx_diag_reset(int64_t now_us)
+{
+    memset(&audio_tx_diag, 0, sizeof(audio_tx_diag));
+    audio_tx_diag.last_frame_start_us = now_us;
+    audio_tx_diag.last_report_us = now_us;
+    audio_tx_diag.first_frame_report_pending = true;
+}
+
+static void bsp_audio_tx_diag_log_heap(const char* phase)
+{
+    const uint32_t internal_caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+    const uint32_t dma_caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA;
+    const uint32_t spiram_caps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
+
+    /*
+     * Log field meanings:
+     *   free    = memory currently available for allocation.
+     *   largest = largest contiguous block; a small value explains allocation failures even when free is high.
+     *   low     = lowest free-memory watermark since boot, not only during this audio session.
+     * Internal and DMA values overlap intentionally: DMA-capable memory is the critical pool for I2S descriptors/buffers.
+     */
+    ESP_LOGI(TAG,
+             "audio TX heap (%s): internal free/largest/low=%u/%u/%u, "
+             "DMA free/largest/low=%u/%u/%u, PSRAM free/largest/low=%u/%u/%u",
+             phase,
+             (unsigned)heap_caps_get_free_size(internal_caps),
+             (unsigned)heap_caps_get_largest_free_block(internal_caps),
+             (unsigned)heap_caps_get_minimum_free_size(internal_caps),
+             (unsigned)heap_caps_get_free_size(dma_caps),
+             (unsigned)heap_caps_get_largest_free_block(dma_caps),
+             (unsigned)heap_caps_get_minimum_free_size(dma_caps),
+             (unsigned)heap_caps_get_free_size(spiram_caps),
+             (unsigned)heap_caps_get_largest_free_block(spiram_caps),
+             (unsigned)heap_caps_get_minimum_free_size(spiram_caps));
+}
+
+static void bsp_audio_tx_diag_report(int64_t now_us, bool first_frame)
+{
+    /*
+     * Log field meanings:
+     *   frames/req/done = upper-layer PCM frames and requested/actually accepted bytes.
+     *   drv/partial/multi = low-level I2S calls, short driver writes, and frames needing more than one driver call.
+     *   zero/state_retry = ESP_OK with no progress and transient INVALID_STATE retries during I2S reconfiguration.
+     *   timeout/state_err/other_err = terminal write failures returned to audio_player.
+     *   slow/max_write = writes taking >=30 ms and the worst full-frame write time; these indicate DMA back-pressure.
+     *   late/max_gap = gaps >=30 ms between frame submissions; these indicate decoder/file/task starvation upstream.
+     *   max_lock = worst wait for codec_tx_mutex; a large value indicates contention with speaker reconfiguration.
+     */
+    ESP_LOGI(TAG,
+             "audio TX I2S (%s): frames=%" PRIu64 " req=%" PRIu64 " done=%" PRIu64
+             " drv=%" PRIu64 " partial=%u multi=%u zero=%u state_retry=%u "
+             "timeout=%u state_err=%u other_err=%u slow=%u late=%u "
+             "max_drv/frame=%u max_lock_us=%" PRId64 " max_write_us=%" PRId64 " max_gap_us=%" PRId64,
+             first_frame ? "first-frame" : "periodic",
+             audio_tx_diag.frame_calls, audio_tx_diag.requested_bytes, audio_tx_diag.written_bytes,
+             audio_tx_diag.driver_calls, audio_tx_diag.partial_driver_writes, audio_tx_diag.multi_call_frames,
+             audio_tx_diag.zero_progress_retries, audio_tx_diag.invalid_state_retries,
+             audio_tx_diag.timeout_errors, audio_tx_diag.invalid_state_errors, audio_tx_diag.other_errors,
+             audio_tx_diag.slow_write_frames, audio_tx_diag.late_frame_gaps,
+             audio_tx_diag.max_driver_calls_per_frame, audio_tx_diag.max_lock_wait_us,
+             audio_tx_diag.max_write_us, audio_tx_diag.max_frame_gap_us);
+    bsp_audio_tx_diag_log_heap(first_frame ? "first-frame" : "periodic");
+    audio_tx_diag.last_report_us = now_us;
+}
+
+#endif // CONFIG_TAB5X_AUDIO_I2S_DIAGNOSTICS
+
 /* Can be used for `i2s_std_gpio_config_t` and/or `i2s_std_config_t` initialization */
 #define BSP_I2S_GPIO_CFG                                                                                           \
     {                                                                                                              \
@@ -890,20 +995,212 @@ static esp_err_t bsp_i2s_read(void* audio_buffer, size_t len, size_t* bytes_read
 
 static esp_err_t bsp_i2s_write(void* audio_buffer, size_t len, size_t* bytes_written, uint32_t timeout_ms)
 {
-    if (audio_buffer == NULL || bytes_written == NULL || play_dev_handle == NULL || codec_tx_mutex == NULL) {
+    if (audio_buffer == NULL || bytes_written == NULL || play_dev_handle == NULL ||
+        i2s_tx_chan == NULL || codec_tx_mutex == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
     *bytes_written = 0;
-    TickType_t wait_ticks = (timeout_ms == portMAX_DELAY) ? portMAX_DELAY : pdMS_TO_TICKS(timeout_ms);
+    if (len == 0) {
+        return ESP_OK;
+    }
+
+    const int64_t operation_start_us = esp_timer_get_time();
+    const bool wait_forever = (timeout_ms == portMAX_DELAY);
+    TickType_t wait_ticks = wait_forever ? portMAX_DELAY : pdMS_TO_TICKS(timeout_ms);
     if (xSemaphoreTake(codec_tx_mutex, wait_ticks) != pdTRUE) {
+#if defined(CONFIG_TAB5X_AUDIO_I2S_DIAGNOSTICS)
+        ESP_LOGE(TAG, "audio TX mutex timeout: request=%u timeout_ms=%" PRIu32,
+                 (unsigned)len, timeout_ms);
+#endif
         return ESP_ERR_TIMEOUT;
     }
-    esp_err_t ret = esp_codec_dev_write(play_dev_handle, audio_buffer, len);
-    xSemaphoreGive(codec_tx_mutex);
-    if (ret == ESP_OK) {
-        // esp_codec_dev's local I2S data interface now guarantees full-write on ESP_OK.
-        *bytes_written = len;
+
+#if defined(CONFIG_TAB5X_AUDIO_I2S_DIAGNOSTICS)
+    const int64_t write_start_us = esp_timer_get_time();
+    const int64_t lock_wait_us = write_start_us - operation_start_us;
+    const int64_t previous_frame_start_us = audio_tx_diag.last_frame_start_us;
+    const bool new_session = (previous_frame_start_us == 0) ||
+                             ((operation_start_us - previous_frame_start_us) > BSP_AUDIO_TX_DIAG_SESSION_GAP_US);
+    if (new_session) {
+        bsp_audio_tx_diag_reset(operation_start_us);
+        /* A session-start heap snapshot is taken before PCM enters DMA, so this diagnostic log cannot starve playback. */
+        bsp_audio_tx_diag_log_heap("session-start");
+    } else {
+        const int64_t frame_gap_us = operation_start_us - previous_frame_start_us;
+        if (frame_gap_us > audio_tx_diag.max_frame_gap_us) {
+            audio_tx_diag.max_frame_gap_us = frame_gap_us;
+        }
+        if (frame_gap_us >= BSP_AUDIO_TX_LATE_FRAME_GAP_US) {
+            audio_tx_diag.late_frame_gaps++;
+        }
     }
+    audio_tx_diag.last_frame_start_us = operation_start_us;
+    audio_tx_diag.frame_calls++;
+    audio_tx_diag.requested_bytes += len;
+    if (lock_wait_us > audio_tx_diag.max_lock_wait_us) {
+        audio_tx_diag.max_lock_wait_us = lock_wait_us;
+    }
+#endif
+
+    const uint8_t* source = (const uint8_t*)audio_buffer;
+    size_t total_written = 0;
+#if defined(CONFIG_TAB5X_AUDIO_I2S_DIAGNOSTICS)
+    uint32_t driver_calls_this_frame = 0;
+#endif
+    uint32_t zero_progress_this_frame = 0;
+    int64_t transient_retry_start_us = 0;
+    esp_err_t ret = ESP_OK;
+
+    /*
+     * Board-level full-write contract:
+     * audio_player treats ESP_OK as "all len bytes accepted". Keep writing from the real driver-reported offset
+     * until that contract is true. This also exposes short writes hidden by esp_codec_dev v1.6.2.
+     * ES8388 volume is hardware controlled on Tab5, so this direct TX write does not bypass software volume processing.
+     */
+    while (total_written < len) {
+        uint32_t write_timeout_ms = timeout_ms;
+        if (!wait_forever) {
+            const int64_t elapsed_us = esp_timer_get_time() - operation_start_us;
+            const int64_t budget_us = (int64_t)timeout_ms * 1000;
+            if (elapsed_us >= budget_us) {
+                write_timeout_ms = 0;
+            } else {
+                write_timeout_ms = (uint32_t)((budget_us - elapsed_us + 999) / 1000);
+            }
+        }
+
+        size_t chunk_written = 0;
+#if defined(CONFIG_TAB5X_AUDIO_I2S_DIAGNOSTICS)
+        driver_calls_this_frame++;
+        audio_tx_diag.driver_calls++;
+#endif
+        ret = i2s_channel_write(i2s_tx_chan, source + total_written, len - total_written,
+                                &chunk_written, write_timeout_ms);
+
+        if (chunk_written > (len - total_written)) {
+#if defined(CONFIG_TAB5X_AUDIO_I2S_DIAGNOSTICS)
+            ESP_LOGE(TAG, "audio TX driver returned invalid length: remaining=%u written=%u",
+                     (unsigned)(len - total_written), (unsigned)chunk_written);
+#endif
+            ret = ESP_FAIL;
+#if defined(CONFIG_TAB5X_AUDIO_I2S_DIAGNOSTICS)
+            audio_tx_diag.other_errors++;
+#endif
+            break;
+        }
+        if (chunk_written > 0) {
+#if defined(CONFIG_TAB5X_AUDIO_I2S_DIAGNOSTICS)
+            if (chunk_written < (len - total_written)) {
+                audio_tx_diag.partial_driver_writes++;
+            }
+#endif
+            total_written += chunk_written;
+#if defined(CONFIG_TAB5X_AUDIO_I2S_DIAGNOSTICS)
+            audio_tx_diag.written_bytes += chunk_written;
+#endif
+            zero_progress_this_frame = 0;
+            transient_retry_start_us = 0;
+        }
+
+        if (ret == ESP_OK && total_written == len) {
+            break;
+        }
+
+        if (ret == ESP_ERR_INVALID_STATE) {
+            const int64_t now_us = esp_timer_get_time();
+            if (transient_retry_start_us == 0) {
+                transient_retry_start_us = now_us;
+            }
+            const bool retry_budget_available = wait_forever ||
+                                                ((now_us - operation_start_us) < (int64_t)timeout_ms * 1000);
+            if (retry_budget_available &&
+                ((now_us - transient_retry_start_us) < BSP_AUDIO_TX_TRANSIENT_RETRY_US)) {
+                /* RX/TX peer reconfiguration can disable TX briefly; retry instead of silently dropping this PCM block. */
+#if defined(CONFIG_TAB5X_AUDIO_I2S_DIAGNOSTICS)
+                audio_tx_diag.invalid_state_retries++;
+#endif
+                vTaskDelay(1);
+                continue;
+            }
+#if defined(CONFIG_TAB5X_AUDIO_I2S_DIAGNOSTICS)
+            audio_tx_diag.invalid_state_errors++;
+#endif
+            break;
+        }
+
+        if (ret != ESP_OK) {
+#if defined(CONFIG_TAB5X_AUDIO_I2S_DIAGNOSTICS)
+            if (ret == ESP_ERR_TIMEOUT) {
+                audio_tx_diag.timeout_errors++;
+            } else {
+                audio_tx_diag.other_errors++;
+            }
+#endif
+            break;
+        }
+
+        if (chunk_written == 0) {
+            zero_progress_this_frame++;
+#if defined(CONFIG_TAB5X_AUDIO_I2S_DIAGNOSTICS)
+            audio_tx_diag.zero_progress_retries++;
+#endif
+            const bool deadline_expired = !wait_forever &&
+                                          ((esp_timer_get_time() - operation_start_us) >=
+                                           (int64_t)timeout_ms * 1000);
+            if (deadline_expired || zero_progress_this_frame >= BSP_AUDIO_TX_MAX_ZERO_PROGRESS_RETRIES) {
+                ret = ESP_ERR_TIMEOUT;
+#if defined(CONFIG_TAB5X_AUDIO_I2S_DIAGNOSTICS)
+                audio_tx_diag.timeout_errors++;
+#endif
+                break;
+            }
+            /* Avoid a busy loop if the driver reports ESP_OK without accepting bytes. */
+            vTaskDelay(1);
+        }
+    }
+
+#if defined(CONFIG_TAB5X_AUDIO_I2S_DIAGNOSTICS)
+    if (driver_calls_this_frame > 1) {
+        audio_tx_diag.multi_call_frames++;
+    }
+    if (driver_calls_this_frame > audio_tx_diag.max_driver_calls_per_frame) {
+        audio_tx_diag.max_driver_calls_per_frame = driver_calls_this_frame;
+    }
+
+    const int64_t write_end_us = esp_timer_get_time();
+    const int64_t write_duration_us = write_end_us - write_start_us;
+    if (write_duration_us > audio_tx_diag.max_write_us) {
+        audio_tx_diag.max_write_us = write_duration_us;
+    }
+    if (write_duration_us >= BSP_AUDIO_TX_SLOW_WRITE_US) {
+        audio_tx_diag.slow_write_frames++;
+    }
+#endif
+    *bytes_written = total_written;
+    xSemaphoreGive(codec_tx_mutex);
+
+    if (ret == ESP_OK && total_written != len) {
+        ret = ESP_FAIL;
+#if defined(CONFIG_TAB5X_AUDIO_I2S_DIAGNOSTICS)
+        audio_tx_diag.other_errors++;
+#endif
+    }
+#if defined(CONFIG_TAB5X_AUDIO_I2S_DIAGNOSTICS)
+    if (ret != ESP_OK) {
+        /* Error log: request/done identifies data loss; calls/time identify retry pressure or I2S reconfiguration. */
+        ESP_LOGE(TAG,
+                 "audio TX full-write failed: err=%s request=%u done=%u calls=%u write_us=%" PRId64,
+                 esp_err_to_name(ret), (unsigned)len, (unsigned)total_written,
+                 driver_calls_this_frame, write_duration_us);
+    }
+
+    const bool first_frame_report = audio_tx_diag.first_frame_report_pending;
+    if (first_frame_report || (write_end_us - audio_tx_diag.last_report_us) >= BSP_AUDIO_TX_DIAG_REPORT_INTERVAL_US) {
+        audio_tx_diag.first_frame_report_pending = false;
+        /* Reporting after releasing codec_tx_mutex avoids extending speaker-format reconfiguration lock contention. */
+        bsp_audio_tx_diag_report(write_end_us, first_frame_report);
+    }
+#endif
     return ret;
 }
 

@@ -10,6 +10,8 @@ idf_component_register(
         esp_driver_i2c
         esp_driver_i2s
         esp_driver_ledc
+        esp_timer
+        heap
         esp_driver_sdmmc
         esp_lcd
         esp_codec_dev

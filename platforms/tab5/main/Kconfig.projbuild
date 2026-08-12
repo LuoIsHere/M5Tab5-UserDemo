@@ -8,4 +8,24 @@ config TAB5X_DRIVER_SMOKE_TEST
         camera frames for five seconds. This validates driver calls and data
         movement only; it does not assess acoustic or image quality.
 
+config TAB5X_AUDIO_I2S_DIAGNOSTICS
+    bool "Enable audio I2S transfer diagnostics"
+    default n
+    help
+        Collect and print board-level audio TX full-write, I2S timing, frame-gap,
+        retry/error, and internal/DMA/PSRAM heap statistics. The full-write
+        behavior remains active when this option is disabled; only the added
+        diagnostic counters and periodic logs are removed.
+
+config TAB5X_MP3_DECODE_DIAGNOSTICS
+    bool "Enable MP3 decode diagnostics"
+    depends on AUDIO_PLAYER_ENABLE_MP3
+    default n
+    help
+        Collect and print MP3 input refill, sync search, Helix decode, decoder
+        call-gap, output-byte, error, heap, and buffer-memory-location statistics.
+        A first-frame report and cumulative reports at about five-second intervals
+        are emitted. Disable this option for normal operation to remove the timing
+        and diagnostic log overhead.
+
 endmenu

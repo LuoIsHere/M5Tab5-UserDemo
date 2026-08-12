@@ -448,7 +448,7 @@ static esp_err_t run_music_session(Mp3PlayTarget_t target)
             .mute_fn      = audio_mute_function,
             .clk_set_fn   = audio_clock_function,
             .write_fn     = codec_handle->i2s_write,
-            .priority     = 5,
+            .priority     = 7,
             .coreID       = 1,
             .force_stereo = false,
             .write_fn2    = nullptr,
