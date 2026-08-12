@@ -8,7 +8,7 @@ set(includes
     "include"
 )
 
-set(requires)
+set(requires heap)
 
 if("${IDF_VERSION_MAJOR}.${IDF_VERSION_MINOR}" VERSION_GREATER_EQUAL "5.3")
     list(APPEND requires esp_driver_i2s esp_ringbuf)
@@ -21,7 +21,7 @@ if(CONFIG_AUDIO_PLAYER_ENABLE_MP3)
 endif()
 
 if(CONFIG_TAB5X_MP3_DECODE_DIAGNOSTICS)
-    list(APPEND requires esp_timer heap esp_hw_support)
+    list(APPEND requires esp_timer esp_hw_support)
 endif()
 
 # TODO: move inside of the 'if(CONFIG_AUDIO_PLAYER_ENABLE_MP3)' when everything builds correctly

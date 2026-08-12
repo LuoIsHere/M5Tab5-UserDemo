@@ -27,6 +27,7 @@
 #include <sys/stat.h>
 
 #include "esp_check.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -631,6 +632,8 @@ static void cleanup_memory(audio_instance_t *i) {
 
 esp_err_t audio_instance_new(audio_instance_handle_t *h, audio_player_config_t *config) {
     BaseType_t task_val;
+    constexpr uint32_t audio_task_stack_bytes = 8 * 1024;
+    constexpr uint32_t internal_caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
 
     ESP_RETURN_ON_FALSE(h != NULL, ESP_ERR_INVALID_ARG, TAG, "handle pointer is NULL");
     ESP_RETURN_ON_FALSE(*h == NULL, ESP_ERR_INVALID_ARG, TAG, "instance is not NULL");
@@ -673,10 +676,18 @@ esp_err_t audio_instance_new(audio_instance_handle_t *h, audio_player_config_t *
     memset(&i->i2s_format, 0, sizeof(i->i2s_format));
 
     i->running = true;
+
+    // free is the total available internal heap; largest is the maximum contiguous block and
+    // therefore determines whether the dynamically allocated Audio Task stack can be created.
+    ESP_LOGI(TAG, "Audio task create memory: internal free/largest=%u/%u stack_bytes=%u",
+             static_cast<unsigned>(heap_caps_get_free_size(internal_caps)),
+             static_cast<unsigned>(heap_caps_get_largest_free_block(internal_caps)),
+             static_cast<unsigned>(audio_task_stack_bytes));
+
     task_val = xTaskCreatePinnedToCore(
         (TaskFunction_t)        audio_task,
                                 "Audio Task",
-                                8 * 1024,
+                                audio_task_stack_bytes,
                                 i,
         (UBaseType_t)           i->config.priority,
                                 &i->task_handle,

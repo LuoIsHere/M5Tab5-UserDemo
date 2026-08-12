@@ -27,13 +27,23 @@ static uart_port_t tab5_rs485_uart_num = UART_NUM_1;
 #define TAB5_SYS_RS485_RX_PIN 21
 #define TAB5_SYS_RS485_DE_PIN 34
 
-static void tab5_rs485_echo_send(const int port, uint8_t* str, uint8_t length)
+static esp_err_t tab5_rs485_echo_send(const uart_port_t port, const uint8_t* data, size_t length)
 {
-    if (uart_write_bytes((uart_port_t)port, str, length) != length) {
-        ESP_LOGE(TAG, "Send data critical failure.");
-        // add your code to handle sending failure here
-        abort();
+    const int written = uart_write_bytes(port, data, length);
+    if (written < 0 || static_cast<size_t>(written) != length) {
+        ESP_LOGE(TAG, "RS485 send failed: requested=%u written=%d",
+                 static_cast<unsigned>(length), written);
+        return ESP_FAIL;
     }
+
+    const esp_err_t wait_result = uart_wait_tx_done(port, pdMS_TO_TICKS(1000));
+    if (wait_result != ESP_OK) {
+        ESP_LOGE(TAG, "RS485 TX completion failed: requested=%u error=%s",
+                 static_cast<unsigned>(length), esp_err_to_name(wait_result));
+        return wait_result;
+    }
+
+    return ESP_OK;
 }
 
 /*
@@ -47,6 +57,7 @@ static void _rs485_test_task(void* param)
 {
     (void)param;
     uint8_t data[TAB5_RS485_BUF_SIZE];
+    std::vector<uint8_t> tx_data;
     TickType_t last_diag_tick = xTaskGetTickCount();
 
     ESP_LOGI(TAG, "RS485 task started: priority=%u core=%d stack_hwm_bytes=%u",
@@ -68,13 +79,18 @@ static void _rs485_test_task(void* param)
             }
         }
 
+        tx_data.clear();
         {
             std::lock_guard<std::mutex> lock(GetHAL()->uartMonitorData.mutex);
+            tx_data.reserve(GetHAL()->uartMonitorData.txQueue.size());
             while (!GetHAL()->uartMonitorData.txQueue.empty()) {
-                uint8_t txData = GetHAL()->uartMonitorData.txQueue.front();
+                tx_data.push_back(GetHAL()->uartMonitorData.txQueue.front());
                 GetHAL()->uartMonitorData.txQueue.pop();
-                uart_write_bytes(tab5_rs485_uart_num, &txData, 1);
             }
+        }
+        if (!tx_data.empty()) {
+            // Keep the UI queue behavior unchanged; the helper records any physical TX failure.
+            (void)tab5_rs485_echo_send(tab5_rs485_uart_num, tx_data.data(), tx_data.size());
         }
 
         TickType_t now = xTaskGetTickCount();
@@ -113,9 +129,10 @@ void HalEsp32::rs485_init()
 
     ESP_LOGI(TAG, "UART set pins, mode and install driver.");
 
-    // Set UART pins as per KConfig settings
+    // ESP32-P4 RS485 half-duplex direction control uses the UART DTR signal.
     ESP_ERROR_CHECK(uart_set_pin(tab5_rs485_uart_num, TAB5_SYS_RS485_TX_PIN, TAB5_SYS_RS485_RX_PIN,
-                                 TAB5_SYS_RS485_DE_PIN, UART_PIN_NO_CHANGE));
+                                 UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE, TAB5_SYS_RS485_DE_PIN,
+                                 UART_PIN_NO_CHANGE));
 
     // Set RS485 half duplex mode
     ESP_ERROR_CHECK(uart_set_mode(tab5_rs485_uart_num, UART_MODE_RS485_HALF_DUPLEX));
