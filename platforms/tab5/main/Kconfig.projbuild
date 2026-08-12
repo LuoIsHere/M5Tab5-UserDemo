@@ -58,6 +58,18 @@ config TAB5X_AUDIO_I2S_DIAGNOSTICS
         behavior remains active when this option is disabled; only the added
         diagnostic counters and periodic logs are removed.
 
+config TAB5X_LVGL_TASK_DIAGNOSTICS
+    bool "Enable LVGL task checkpoint diagnostics"
+    depends on TAB5X_BOOT_MODE_NORMAL
+    default n
+    help
+        Count the LVGL task A-I checkpoints around the LVGL mutex, touch
+        timer mutex, input-device reads, timer handler, and mutex release.
+        A low-priority diagnostic task prints the counters every five seconds,
+        so counter mismatches remain visible if the LVGL task blocks. Enable
+        this option only while diagnosing UI freezes because it adds periodic
+        logging and a small diagnostic task.
+
 config TAB5X_MP3_DECODE_DIAGNOSTICS
     bool "Enable MP3 decode diagnostics"
     depends on AUDIO_PLAYER_ENABLE_MP3

@@ -198,6 +198,9 @@ public:
     {
         return 0;
     }
+    virtual void setMicrophoneGain(float gain)
+    {
+    }
     // [MIC-L, AEC, MIC-R, MIC-HP]
     virtual void audioRecord(std::vector<int16_t>& data, uint16_t durationMs, float gain = 80.0f)
     {

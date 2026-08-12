@@ -35,6 +35,9 @@ public:
     {
         _window->setScrollbarMode(LV_SCROLLBAR_MODE_OFF);
 
+        // Configure capture gain once when the Music Test window opens.
+        GetHAL()->setMicrophoneGain(20.0f);
+
         _panel_aec = std::make_unique<Container>(_window->get());
         _panel_aec->align(LV_ALIGN_CENTER, -60, 0);
         _panel_aec->setSize(243, 153);
@@ -85,7 +88,7 @@ public:
 
         const uint32_t now = GetHAL()->millis();
 
-        // Limit capture and chart updates so playback keeps enough CPU/I2S time.
+        // Keep the capture chart active during playback, but limit updates to one batch every 20 ms.
         if (_chart_aec && now - _capture_time_count >= 20) {
             GetHAL()->audioRecord(_record_data, 4, 20);  // 48000 * 4 / 1000 = 192
             // [MIC-L, AEC, MIC-R, MIC-HP]
@@ -112,6 +115,8 @@ public:
 private:
     uint32_t _time_count         = 0;
     uint32_t _capture_time_count = 0;
+    hal::HalBase::MusicPlayState_t _button_state = hal::HalBase::MUSIC_PLAY_IDLE;
+    bool _button_state_valid = false;
     std::vector<int16_t> _record_data;
     std::unique_ptr<Button> _rec_btn;
     std::unique_ptr<Spinner> _rec_btn_spinner;
@@ -122,19 +127,30 @@ private:
     void update_rec_button()
     {
         const auto state = GetHAL()->getMusicPlayTestState();
+        if (_button_state_valid && state == _button_state) {
+            return;
+        }
+        _button_state       = state;
+        _button_state_valid = true;
+
         if (state == hal::HalBase::MUSIC_PLAY_STARTING) {
+            _rec_btn->setBgColor(lv_color_hex(0x31D584));
             _rec_btn->label().setText("STARTING");
             update_spinner(0x31D584);
         } else if (state == hal::HalBase::MUSIC_PLAY_PLAYING) {
+            _rec_btn->setBgColor(lv_color_hex(0x31D584));
             _rec_btn->label().setText("STOP");
             update_spinner(0x31D584);
         } else if (state == hal::HalBase::MUSIC_PLAY_STOPPING) {
+            _rec_btn->setBgColor(lv_color_hex(0xD5A331));
             _rec_btn->label().setText("STOPPING");
             update_spinner(0xD5A331);
         } else if (state == hal::HalBase::MUSIC_PLAY_ERROR) {
+            _rec_btn->setBgColor(lv_color_hex(0xD04848));
             _rec_btn->label().setText("RETRY");
             _rec_btn_spinner.reset();
         } else {
+            _rec_btn->setBgColor(lv_color_hex(0x31D584));
             _rec_btn->label().setText(" PLAY\nMUSIC");
             _rec_btn_spinner.reset();
         }

@@ -61,6 +61,7 @@ public:
 
     void setSpeakerVolume(uint8_t volume) override;
     uint8_t getSpeakerVolume() override;
+    void setMicrophoneGain(float gain) override;
     void audioRecord(std::vector<int16_t>& data, uint16_t durationMs, float gain = 80.0f) override;
     void audioPlay(std::vector<int16_t>& data, bool async = true) override;
     void startDualMicRecordTest() override;

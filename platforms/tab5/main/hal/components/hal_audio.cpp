@@ -21,7 +21,9 @@
 static const char* TAG = "audio";
 
 static uint8_t _current_speaker_volume = 60;
+static float _current_microphone_gain   = -1.0f;
 static std::mutex _audio_tx_mutex;
+static std::mutex _audio_rx_config_mutex;
 
 void HalEsp32::setSpeakerVolume(uint8_t volume)
 {
@@ -34,13 +36,43 @@ uint8_t HalEsp32::getSpeakerVolume()
     return _current_speaker_volume;
 }
 
+static void set_microphone_gain(float gain)
+{
+    std::lock_guard<std::mutex> lock(_audio_rx_config_mutex);
+    if (_current_microphone_gain == gain) {
+        return;
+    }
+
+    bsp_codec_config_t* codec_handle = bsp_get_codec_handle();
+    if (codec_handle == nullptr || codec_handle->set_in_gain == nullptr) {
+        mclog::tagError(TAG, "set microphone gain failed: codec is not ready");
+        return;
+    }
+
+    const esp_err_t ret = codec_handle->set_in_gain(gain);
+    if (ret != ESP_OK) {
+        mclog::tagError(TAG, "set microphone gain failed: {}", esp_err_to_name(ret));
+        return;
+    }
+
+    // Cache a successfully applied gain so high-frequency capture does not repeat codec/I2C writes.
+    _current_microphone_gain = gain;
+}
+
+void HalEsp32::setMicrophoneGain(float gain)
+{
+    set_microphone_gain(gain);
+}
+
 void HalEsp32::audioRecord(std::vector<int16_t>& data, uint16_t durationMs, float gain)
 {
     data.resize(48000 * 4 * durationMs / 1000);
 
+    // Preserve the existing per-call gain API while avoiding duplicate hardware writes.
+    set_microphone_gain(gain);
+
     // ESP_LOGI(TAG, "start record");
     bsp_codec_config_t* codec_handle = bsp_get_codec_handle();
-    codec_handle->set_in_gain(gain);
     size_t bytes_read = 0;
     codec_handle->i2s_read((char*)data.data(), (48000 * 4 * durationMs / 1000) * sizeof(uint16_t), &bytes_read,
                            portMAX_DELAY);
@@ -182,7 +214,7 @@ static void _rec_test_task(void* param)
     esp_err_t read_ret        = ESP_OK;
 
     bsp_codec_config_t* codec_handle = bsp_get_codec_handle();
-    codec_handle->set_in_gain(240);
+    set_microphone_gain(240.0f);
 
     int16_t* read_buf = _rec_test_data.read_buffer;
     memset(read_buf, 0, total_samples * sizeof(int16_t));  // 清零
@@ -448,7 +480,7 @@ static esp_err_t run_music_session(Mp3PlayTarget_t target)
             .mute_fn      = audio_mute_function,
             .clk_set_fn   = audio_clock_function,
             .write_fn     = codec_handle->i2s_write,
-            .priority     = 7,
+            .priority     = 8,
             .coreID       = 1,
             .force_stereo = false,
             .write_fn2    = nullptr,
