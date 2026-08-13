@@ -5,8 +5,8 @@
  */
 #pragma once
 #include <lvgl.h>
-#include <smooth_ui_toolkit.h>
-#include <smooth_lvgl.h>
+#include <smooth_ui_toolkit.hpp>
+#include <smooth_lvgl.hpp>
 #include <memory>
 #include <string>
 #include <cstdint>

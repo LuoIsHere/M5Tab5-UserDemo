@@ -8,8 +8,8 @@
 #include <string>
 #include <lvgl.h>
 #include <mooncake.h>
-#include <smooth_ui_toolkit.h>
-#include <smooth_lvgl.h>
+#include <smooth_ui_toolkit.hpp>
+#include <smooth_lvgl.hpp>
 #include <memory>
 #include <vector>
 

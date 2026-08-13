@@ -1311,11 +1311,10 @@ CONFIG_PARTITION_TABLE_MD5=y
 #
 CONFIG_TAB5X_BOOT_MODE_NORMAL=y
 # CONFIG_TAB5X_BOOT_MODE_MP3_ISOLATED is not set
-CONFIG_TAB5X_DRIVER_SMOKE_TEST=y
-CONFIG_TAB5X_AUDIO_I2S_DIAGNOSTICS=y
+# CONFIG_TAB5X_DRIVER_SMOKE_TEST is not set
+# CONFIG_TAB5X_AUDIO_I2S_DIAGNOSTICS is not set
 # default:
 # CONFIG_TAB5X_LVGL_TASK_DIAGNOSTICS is not set
-# default:
 CONFIG_TAB5X_LVGL_DISPLAY_ROTATION_USE_PPA=y
 # CONFIG_TAB5X_MP3_DECODE_DIAGNOSTICS is not set
 # end of Tab5X test options
@@ -4104,9 +4103,9 @@ CONFIG_LV_OS_NONE=y
 # default:
 # CONFIG_LV_OS_MQX is not set
 # default:
-# CONFIG_LV_OS_CUSTOM is not set
+# CONFIG_LV_OS_SDL2 is not set
 # default:
-CONFIG_LV_USE_OS=0
+# CONFIG_LV_OS_CUSTOM is not set
 # end of Operating System (OS)
 
 #
@@ -4119,9 +4118,13 @@ CONFIG_LV_DRAW_BUF_ALIGN=4
 # default:
 CONFIG_LV_DRAW_LAYER_SIMPLE_BUF_SIZE=24576
 # default:
+CONFIG_LV_DRAW_LAYER_MAX_MEMORY=0
+# default:
 CONFIG_LV_USE_DRAW_SW=y
 # default:
 CONFIG_LV_DRAW_SW_SUPPORT_RGB565=y
+# default:
+CONFIG_LV_DRAW_SW_SUPPORT_RGB565_SWAPPED=y
 # default:
 CONFIG_LV_DRAW_SW_SUPPORT_RGB565A8=y
 # default:
@@ -4131,6 +4134,8 @@ CONFIG_LV_DRAW_SW_SUPPORT_XRGB8888=y
 # default:
 CONFIG_LV_DRAW_SW_SUPPORT_ARGB8888=y
 # default:
+CONFIG_LV_DRAW_SW_SUPPORT_ARGB8888_PREMULTIPLIED=y
+# default:
 CONFIG_LV_DRAW_SW_SUPPORT_L8=y
 # default:
 CONFIG_LV_DRAW_SW_SUPPORT_AL88=y
@@ -4138,6 +4143,8 @@ CONFIG_LV_DRAW_SW_SUPPORT_AL88=y
 CONFIG_LV_DRAW_SW_SUPPORT_A8=y
 # default:
 CONFIG_LV_DRAW_SW_SUPPORT_I1=y
+# default:
+CONFIG_LV_DRAW_SW_I1_LUM_THRESHOLD=127
 # default:
 CONFIG_LV_DRAW_SW_DRAW_UNIT_CNT=1
 # default:
@@ -4159,13 +4166,15 @@ CONFIG_LV_DRAW_SW_ASM_NONE=y
 # default:
 # CONFIG_LV_DRAW_SW_ASM_HELIUM is not set
 # default:
+# CONFIG_LV_DRAW_SW_ASM_RISCV_V is not set
+# default:
 # CONFIG_LV_DRAW_SW_ASM_CUSTOM is not set
 # default:
 CONFIG_LV_USE_DRAW_SW_ASM=0
 # default:
-# CONFIG_LV_USE_DRAW_VGLITE is not set
-# default:
 # CONFIG_LV_USE_PXP is not set
+# default:
+# CONFIG_LV_USE_G2D is not set
 # default:
 # CONFIG_LV_USE_DRAW_DAVE2D is not set
 # default:
@@ -4174,6 +4183,12 @@ CONFIG_LV_USE_DRAW_SW_ASM=0
 # CONFIG_LV_USE_DRAW_VG_LITE is not set
 # default:
 # CONFIG_LV_USE_VECTOR_GRAPHIC is not set
+# default:
+# CONFIG_LV_USE_DRAW_DMA2D is not set
+# default:
+# CONFIG_LV_USE_PPA is not set
+# default:
+# CONFIG_LV_USE_DRAW_EVE is not set
 # end of Rendering Configuration
 
 #
@@ -4269,7 +4284,11 @@ CONFIG_LV_COLOR_MIX_ROUND_OFS=128
 # default:
 # CONFIG_LV_USE_OBJ_ID is not set
 # default:
+# CONFIG_LV_USE_OBJ_NAME is not set
+# default:
 # CONFIG_LV_USE_OBJ_PROPERTY is not set
+# default:
+# CONFIG_LV_USE_EXT_DATA is not set
 # end of Others
 # end of Feature Configuration
 
@@ -4325,9 +4344,9 @@ CONFIG_LV_FONT_MONTSERRAT_44=y
 # default:
 # CONFIG_LV_FONT_DEJAVU_16_PERSIAN_HEBREW is not set
 # default:
-# CONFIG_LV_FONT_SIMSUN_14_CJK is not set
+# CONFIG_LV_FONT_SOURCE_HAN_SANS_SC_14_CJK is not set
 # default:
-# CONFIG_LV_FONT_SIMSUN_16_CJK is not set
+# CONFIG_LV_FONT_SOURCE_HAN_SANS_SC_16_CJK is not set
 # default:
 # CONFIG_LV_FONT_UNSCII_8 is not set
 # default:
@@ -4381,9 +4400,9 @@ CONFIG_LV_FONT_DEFAULT_MONTSERRAT_14=y
 # default:
 # CONFIG_LV_FONT_DEFAULT_DEJAVU_16_PERSIAN_HEBREW is not set
 # default:
-# CONFIG_LV_FONT_DEFAULT_SIMSUN_14_CJK is not set
+# CONFIG_LV_FONT_DEFAULT_SOURCE_HAN_SANS_SC_14_CJK is not set
 # default:
-# CONFIG_LV_FONT_DEFAULT_SIMSUN_16_CJK is not set
+# CONFIG_LV_FONT_DEFAULT_SOURCE_HAN_SANS_SC_16_CJK is not set
 # default:
 # CONFIG_LV_FONT_DEFAULT_UNSCII_8 is not set
 # default:
@@ -4392,6 +4411,11 @@ CONFIG_LV_FONT_FMT_TXT_LARGE=y
 CONFIG_LV_USE_FONT_COMPRESSED=y
 # default:
 CONFIG_LV_USE_FONT_PLACEHOLDER=y
+
+#
+# Enable static fonts
+#
+# end of Enable static fonts
 # end of Font Usage
 
 #
@@ -4405,6 +4429,8 @@ CONFIG_LV_TXT_ENC_UTF8=y
 CONFIG_LV_TXT_BREAK_CHARS=" ,.;:-_)}"
 # default:
 CONFIG_LV_TXT_LINE_BREAK_LONG_LEN=0
+# default:
+CONFIG_LV_TXT_COLOR_CMD="#"
 # default:
 # CONFIG_LV_USE_BIDI is not set
 # default:
@@ -4421,6 +4447,8 @@ CONFIG_LV_USE_ANIMIMG=y
 # default:
 CONFIG_LV_USE_ARC=y
 # default:
+CONFIG_LV_USE_ARCLABEL=y
+# default:
 CONFIG_LV_USE_BAR=y
 # default:
 CONFIG_LV_USE_BUTTON=y
@@ -4430,6 +4458,26 @@ CONFIG_LV_USE_BUTTONMATRIX=y
 CONFIG_LV_USE_CALENDAR=y
 # default:
 # CONFIG_LV_CALENDAR_WEEK_STARTS_MONDAY is not set
+
+#
+# Days name configuration
+#
+# default:
+CONFIG_LV_MONDAY_STR="Mo"
+# default:
+CONFIG_LV_TUESDAY_STR="Tu"
+# default:
+CONFIG_LV_WEDNESDAY_STR="We"
+# default:
+CONFIG_LV_THURSDAY_STR="Th"
+# default:
+CONFIG_LV_FRIDAY_STR="Fr"
+# default:
+CONFIG_LV_SATURDAY_STR="Sa"
+# default:
+CONFIG_LV_SUNDAY_STR="Su"
+# end of Days name configuration
+
 # default:
 CONFIG_LV_USE_CALENDAR_HEADER_ARROW=y
 # default:
@@ -4528,7 +4576,7 @@ CONFIG_LV_USE_GRID=y
 # 3rd Party Libraries
 #
 # default:
-CONFIG_LV_FS_DEFAULT_DRIVE_LETTER=0
+CONFIG_LV_FS_DEFAULT_DRIVER_LETTER=0
 # default:
 # CONFIG_LV_USE_FS_STDIO is not set
 # default:
@@ -4546,6 +4594,10 @@ CONFIG_LV_FS_DEFAULT_DRIVE_LETTER=0
 # default:
 # CONFIG_LV_USE_FS_ARDUINO_SD is not set
 # default:
+# CONFIG_LV_USE_FS_UEFI is not set
+# default:
+# CONFIG_LV_USE_FS_FROGFS is not set
+# default:
 # CONFIG_LV_USE_LODEPNG is not set
 # default:
 # CONFIG_LV_USE_LIBPNG is not set
@@ -4555,6 +4607,8 @@ CONFIG_LV_FS_DEFAULT_DRIVE_LETTER=0
 # CONFIG_LV_USE_TJPGD is not set
 # default:
 # CONFIG_LV_USE_LIBJPEG_TURBO is not set
+# default:
+# CONFIG_LV_USE_LIBWEBP is not set
 # default:
 # CONFIG_LV_USE_GIF is not set
 # default:
@@ -4573,6 +4627,8 @@ CONFIG_LV_FS_DEFAULT_DRIVE_LETTER=0
 # CONFIG_LV_USE_RLOTTIE is not set
 # default:
 # CONFIG_LV_USE_THORVG is not set
+# default:
+# CONFIG_LV_USE_NANOVG is not set
 # default:
 # CONFIG_LV_USE_LZ4 is not set
 # default:
@@ -4603,11 +4659,19 @@ CONFIG_LV_USE_OBSERVER=y
 # default:
 # CONFIG_LV_USE_FILE_EXPLORER is not set
 # default:
+# CONFIG_LV_USE_FONT_MANAGER is not set
+# default:
+# CONFIG_LV_USE_TEST is not set
+# default:
+# CONFIG_LV_USE_TRANSLATION is not set
+# default:
+# CONFIG_LV_USE_COLOR_FILTER is not set
+# default:
 CONFIG_LVGL_VERSION_MAJOR=9
 # default:
-CONFIG_LVGL_VERSION_MINOR=2
+CONFIG_LVGL_VERSION_MINOR=5
 # default:
-CONFIG_LVGL_VERSION_PATCH=2
+CONFIG_LVGL_VERSION_PATCH=0
 # end of Others
 
 #
@@ -4628,6 +4692,8 @@ CONFIG_LVGL_VERSION_PATCH=2
 # default:
 # CONFIG_LV_USE_TFT_ESPI is not set
 # default:
+# CONFIG_LV_USE_LOVYAN_GFX is not set
+# default:
 # CONFIG_LV_USE_EVDEV is not set
 # default:
 # CONFIG_LV_USE_LIBINPUT is not set
@@ -4642,9 +4708,15 @@ CONFIG_LVGL_VERSION_PATCH=2
 # default:
 # CONFIG_LV_USE_GENERIC_MIPI is not set
 # default:
+# CONFIG_LV_USE_NXP_ELCDIF is not set
+# default:
 # CONFIG_LV_USE_RENESAS_GLCDC is not set
 # default:
-# CONFIG_LV_USE_OPENGLES is not set
+# CONFIG_LV_USE_ST_LTDC is not set
+# default:
+# CONFIG_LV_USE_FT81X is not set
+# default:
+# CONFIG_LV_USE_UEFI is not set
 # default:
 # CONFIG_LV_USE_QNX is not set
 # end of Devices
@@ -4660,23 +4732,28 @@ CONFIG_LV_BUILD_EXAMPLES=y
 # Demos
 #
 # default:
+CONFIG_LV_BUILD_DEMOS=y
+# default:
 # CONFIG_LV_USE_DEMO_WIDGETS is not set
 # default:
 # CONFIG_LV_USE_DEMO_KEYPAD_AND_ENCODER is not set
+# CONFIG_LV_USE_DEMO_BENCHMARK is not set
 # default:
 # CONFIG_LV_USE_DEMO_RENDER is not set
 # default:
-# CONFIG_LV_USE_DEMO_SCROLL is not set
-# default:
 # CONFIG_LV_USE_DEMO_STRESS is not set
-# default:
-# CONFIG_LV_USE_DEMO_TRANSFORM is not set
 # default:
 # CONFIG_LV_USE_DEMO_MUSIC is not set
 # default:
 # CONFIG_LV_USE_DEMO_FLEX_LAYOUT is not set
 # default:
 # CONFIG_LV_USE_DEMO_MULTILANG is not set
+# default:
+# CONFIG_LV_USE_DEMO_SMARTWATCH is not set
+# default:
+# CONFIG_LV_USE_DEMO_EBIKE is not set
+# default:
+# CONFIG_LV_USE_DEMO_HIGH_RES is not set
 # end of Demos
 # end of LVGL configuration
 
@@ -5228,6 +5305,13 @@ CONFIG_ESP_LCD_TOUCH_MAX_POINTS=5
 # default:
 CONFIG_ESP_LCD_TOUCH_MAX_BUTTONS=1
 # end of ESP LCD TOUCH
+
+#
+# ESP LVGL PORT
+#
+# default:
+# CONFIG_LVGL_PORT_ENABLE_PPA is not set
+# end of ESP LVGL PORT
 
 #
 # Espressif SCCB Configurations

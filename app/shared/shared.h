@@ -11,7 +11,7 @@
 #include <vector>
 #include <queue>
 #include <functional>
-#include <smooth_ui_toolkit.h>
+#include <smooth_ui_toolkit.hpp>
 
 /**
  * @brief 共享数据层，提供一个带互斥锁的全局共享数据单例

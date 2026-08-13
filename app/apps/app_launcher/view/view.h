@@ -8,8 +8,8 @@
 #include <memory>
 #include <lvgl.h>
 #include <apps/utils/ui/window.h>
-#include <smooth_ui_toolkit.h>
-#include <smooth_lvgl.h>
+#include <smooth_ui_toolkit.hpp>
+#include <smooth_lvgl.hpp>
 #include <vector>
 
 namespace launcher_view {

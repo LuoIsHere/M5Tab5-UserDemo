@@ -137,7 +137,7 @@ dependencies:
     - esp32p4
     version: 1.0.1
   espressif/esp_lcd_touch:
-    component_hash: 779b4ba2464a3ae85681e4b860caa5fdc35801458c23f3039ee761bae7f442a4
+    component_hash: 3f85a7d95af876f1a6ecca8eb90a81614890d0f03a038390804e5a77e2caf862
     dependencies:
     - name: idf
       require: private
@@ -145,7 +145,7 @@ dependencies:
     source:
       registry_url: https://components.espressif.com/
       type: service
-    version: 1.1.2
+    version: 1.2.1
   espressif/esp_lcd_touch_gt911:
     component_hash: acc1c184358aa29ef72506f618c9c76a8cc2bf12af38a2bff3d44d84f3a08857
     dependencies:
@@ -178,6 +178,20 @@ dependencies:
       registry_url: https://components.espressif.com/
       type: service
     version: 1.0.0
+  espressif/esp_lvgl_port:
+    component_hash: cca194347416db5f7fbe53e3bf788266061032c6b094d0186e9c988d6e8ff218
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.2'
+    - name: lvgl/lvgl
+      registry_url: https://components.espressif.com
+      require: public
+      version: '>=8,<10'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 2.8.0
   espressif/esp_sccb_intf:
     component_hash: c071b189e49f40940722aea01a5489f873385cc39cd5b14012341135b85d1a9d
     dependencies:
@@ -348,7 +362,7 @@ dependencies:
     component_hash: 184e532558c1c45fefed631f3e235423d22582aafb4630f3e8885c35281a49ae
     dependencies: []
     source:
-      registry_url: https://components.espressif.com/
+      registry_url: https://components.espressif.com
       type: service
     version: 9.5.0
 direct_dependencies:
@@ -362,13 +376,13 @@ direct_dependencies:
 - espressif/esp_lcd_touch
 - espressif/esp_lcd_touch_gt911
 - espressif/esp_lcd_touch_st7123
+- espressif/esp_lvgl_port
 - espressif/esp_video
 - espressif/esp_wifi_remote
 - espressif/led_strip
 - espressif/usb
 - espressif/usb_host_hid
 - idf
-- lvgl/lvgl
-manifest_hash: 5004fcf16280e3b2a1724c0ea83243f2298200008b35e115b5fe31347798d9e5
+manifest_hash: 7e3b8619c1613565182456214ae7b499e59ee0b679f87ff293a6621300ee90ed
 target: esp32p4
 version: 3.0.0
