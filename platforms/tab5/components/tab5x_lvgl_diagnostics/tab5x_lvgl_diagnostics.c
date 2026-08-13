@@ -120,6 +120,7 @@ void tab5x_lvgl_diagnostics_init(void)
     ESP_LOGI(TAG, "LVGL checkpoint diagnostics enabled (A-AG, 5 s interval)");
     ESP_LOGI(TAG, "A-I=LVGL task, J-M=timer/refresh, N-Q=rotation/PPA, R-Y=flush path");
     ESP_LOGI(TAG, "Z-AE=input callbacks, AF/AG=camera PPA; see source comments for exact meanings");
+    ESP_LOGI(TAG, "LVGL checkpoint meanings: platforms/tab5/components/tab5x_lvgl_diagnostics/include/tab5x_lvgl_diagnostics.h");
 }
 
 void tab5x_lvgl_diagnostics_deinit(void)

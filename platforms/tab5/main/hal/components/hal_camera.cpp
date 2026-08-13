@@ -17,6 +17,7 @@
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include "esp_err.h"
+#include "esp_idf_version.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include "linux/videodev2.h"
@@ -711,7 +712,9 @@ static void app_camera_display(void* arg)
             .oper_type = PPA_OPERATION_SRM,
             .max_pending_trans_num = 1,
             .data_burst_length = PPA_DATA_BURST_LENGTH_128,
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(6, 1, 0)
             .flags = {},
+#endif
         };
         result = ppa_register_client(&ppa_config, &ppa_handle);
         if (result != ESP_OK) {

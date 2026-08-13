@@ -19,15 +19,19 @@
 #include "esp_lvgl_port.h"
 #include "esp_lvgl_port_priv.h"
 #include "tab5x_lvgl_diagnostics.h"
+#if CONFIG_TAB5X_LVGL_DISPLAY_ROTATION_USE_PPA
 #include "driver/ppa.h"
+#endif
 #include "esp_heap_caps.h"
 #include "esp_private/esp_cache_private.h"
 
 #define ALIGN_UP_BY(num, align) (((num) + ((align)-1)) & ~((align)-1))
 #define BLOCK_SIZE_SMALL        (32)
 #define BLOCK_SIZE_LARGE        (256)
+#if CONFIG_TAB5X_LVGL_DISPLAY_ROTATION_USE_PPA
 static ppa_client_handle_t ppa_srm_handle = NULL;
 static size_t data_cache_line_size        = 0;
+#endif
 
 #if CONFIG_IDF_TARGET_ESP32S3 && ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
 #include "esp_lcd_panel_rgb.h"
@@ -132,12 +136,14 @@ lv_display_t* lvgl_port_add_disp(const lvgl_port_display_cfg_t* disp_cfg)
 lv_display_t* lvgl_port_add_disp_dsi(const lvgl_port_display_cfg_t* disp_cfg,
                                      const lvgl_port_display_dsi_cfg_t* dsi_cfg)
 {
-    // Initialize the PPA
+#if CONFIG_TAB5X_LVGL_DISPLAY_ROTATION_USE_PPA
+    // Initialize the PPA used by the blocking LVGL display rotation path.
     ppa_client_config_t ppa_srm_config = {
         .oper_type = PPA_OPERATION_SRM,
     };
     ESP_ERROR_CHECK(ppa_register_client(&ppa_srm_config, &ppa_srm_handle));
     ESP_ERROR_CHECK(esp_cache_get_alignment(MALLOC_CAP_SPIRAM, &data_cache_line_size));
+#endif
 
     assert(dsi_cfg != NULL);
     const lvgl_port_disp_priv_cfg_t priv_cfg = {
@@ -623,6 +629,7 @@ void lvgl_port_rotate_area(lv_display_t* disp, lv_area_t* area)
     }
 }
 
+#if CONFIG_TAB5X_LVGL_DISPLAY_ROTATION_USE_PPA
 IRAM_ATTR static void rotate_copy_pixel(const uint16_t* from, uint16_t* to, uint16_t x_start, uint16_t y_start,
                                         uint16_t x_end, uint16_t y_end, uint16_t w, uint16_t h, uint16_t rotation)
 {
@@ -687,6 +694,7 @@ IRAM_ATTR static void rotate_copy_pixel(const uint16_t* from, uint16_t* to, uint
     ESP_ERROR_CHECK(ppa_do_scale_rotate_mirror(ppa_srm_handle, &oper_config));
     TAB5X_LVGL_DIAG_HIT(Q);
 }
+#endif
 
 static void lvgl_port_flush_callback(lv_display_t* drv, const lv_area_t* area, uint8_t* color_map)
 {
@@ -716,15 +724,17 @@ static void lvgl_port_flush_callback(lv_display_t* drv, const lv_area_t* area, u
                 lv_draw_sw_rotate(color_map, disp_ctx->draw_buffs[2], hh, ww, h_stride, h_stride,
                                   LV_DISPLAY_ROTATION_180, cf);
             } else if (disp_ctx->current_rotation == LV_DISPLAY_ROTATION_90) {
-                // printf("%ld %ld\n", w_stride, h_stride);
-                // lv_draw_sw_rotate(color_map, disp_ctx->draw_buffs[2], ww, hh, w_stride, h_stride,
-                //                   LV_DISPLAY_ROTATION_90, cf);
-                // rotate_copy_pixel((uint16_t*)color_map, (uint16_t*)disp_ctx->draw_buffs[2], offsetx1, offsety1,
-                //                   offsetx2, offsety2, LV_HOR_RES, LV_VER_RES, 270);
-                /* N/O: before/after rotate_copy_pixel(), including its blocking PPA call. */
+                /* N/O: before/after the selected LVGL display rotation backend. */
                 TAB5X_LVGL_DIAG_HIT(N);
+#if CONFIG_TAB5X_LVGL_DISPLAY_ROTATION_USE_PPA
+                /* The enabled path uses the blocking PPA rotation transaction. */
                 rotate_copy_pixel((uint16_t*)color_map, (uint16_t*)disp_ctx->draw_buffs[2], 0, 0, offsetx2 - offsetx1,
                                   offsety2 - offsety1, offsetx2 - offsetx1 + 1, offsety2 - offsety1 + 1, 270);
+#else
+                /* The disabled path keeps sw_rotate enabled but uses LVGL CPU rotation. */
+                lv_draw_sw_rotate(color_map, disp_ctx->draw_buffs[2], ww, hh, w_stride, h_stride,
+                                  LV_DISPLAY_ROTATION_90, cf);
+#endif
                 TAB5X_LVGL_DIAG_HIT(O);
             } else if (disp_ctx->current_rotation == LV_DISPLAY_ROTATION_270) {
                 lv_draw_sw_rotate(color_map, disp_ctx->draw_buffs[2], ww, hh, w_stride, h_stride,

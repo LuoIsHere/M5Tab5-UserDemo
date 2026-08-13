@@ -71,6 +71,16 @@ config TAB5X_LVGL_TASK_DIAGNOSTICS
         this option only while diagnosing UI freezes because it adds periodic
         logging and a small diagnostic task.
 
+config TAB5X_LVGL_DISPLAY_ROTATION_USE_PPA
+    bool "Use PPA for LVGL display rotation"
+    depends on TAB5X_BOOT_MODE_NORMAL
+    default y
+    help
+        Use the blocking PPA path for LVGL software display rotation. When
+        disabled, LVGL software rotation remains enabled and lv_draw_sw_rotate()
+        is used instead. This option changes only the display rotation backend;
+        it does not disable sw_rotate.
+
 config TAB5X_MP3_DECODE_DIAGNOSTICS
     bool "Enable MP3 decode diagnostics"
     depends on AUDIO_PLAYER_ENABLE_MP3
