@@ -17,6 +17,7 @@
 #include "freertos/event_groups.h"
 #include "esp_lvgl_port.h"
 #include "esp_lvgl_port_priv.h"
+#include "tab5x_lvgl_diagnostics.h"
 #include "lvgl.h"
 
 static const char *TAG = "LVGL";
@@ -27,35 +28,6 @@ static const char *TAG = "LVGL";
  * Types definitions
  *******************************************************************************/
 
-#if defined(CONFIG_TAB5X_LVGL_TASK_DIAGNOSTICS)
-/*
- * LVGL task checkpoints:
- * A: before acquiring lvgl_mux
- * B: after acquiring lvgl_mux
- * C: before acquiring timer_mux
- * D: after acquiring timer_mux
- * E: before the explicit lv_indev_read() call
- * F: after the explicit lv_indev_read() call
- * G: before lv_timer_handler()
- * H: after lv_timer_handler()
- * I: after releasing lvgl_mux
- *
- * E/F cover only event-driven input reads performed explicitly by
- * lvgl_port_task. Input-device timer callbacks run by lv_timer_handler()
- * are included between G and H instead.
- */
-typedef struct {
-    uint32_t a_before_lvgl_mux;
-    uint32_t b_after_lvgl_mux;
-    uint32_t c_before_timer_mux;
-    uint32_t d_after_timer_mux;
-    uint32_t e_before_indev_read;
-    uint32_t f_after_indev_read;
-    uint32_t g_before_timer_handler;
-    uint32_t h_after_timer_handler;
-    uint32_t i_after_lvgl_mux_release;
-} lvgl_port_diagnostics_counters_t;
-#endif
 
 typedef struct lvgl_port_ctx_s {
     TaskHandle_t lvgl_task;
@@ -64,12 +36,6 @@ typedef struct lvgl_port_ctx_s {
     EventGroupHandle_t lvgl_events;
     SemaphoreHandle_t task_init_mux;
     esp_timer_handle_t tick_timer;
-#if defined(CONFIG_TAB5X_LVGL_TASK_DIAGNOSTICS)
-    TaskHandle_t diagnostics_task;
-    SemaphoreHandle_t diagnostics_stopped_mux;
-    bool diagnostics_running;
-    lvgl_port_diagnostics_counters_t diagnostics;
-#endif
     bool running;
     int task_max_sleep_ms;
     int timer_period_ms;
@@ -80,15 +46,6 @@ typedef struct lvgl_port_ctx_s {
  *******************************************************************************/
 static lvgl_port_ctx_t lvgl_port_ctx;
 
-#if defined(CONFIG_TAB5X_LVGL_TASK_DIAGNOSTICS)
-#define LVGL_PORT_DIAGNOSTICS_PERIOD_MS 5000
-#define LVGL_PORT_DIAGNOSTICS_TASK_STACK_SIZE 3072
-#define LVGL_PORT_DIAGNOSTICS_TASK_PRIORITY (tskIDLE_PRIORITY + 1)
-#define LVGL_PORT_DIAGNOSTICS_HIT(field) \
-    ((void)__atomic_add_fetch(&lvgl_port_ctx.diagnostics.field, 1U, __ATOMIC_RELAXED))
-#else
-#define LVGL_PORT_DIAGNOSTICS_HIT(field) ((void)0)
-#endif
 
 /*******************************************************************************
  * Function definitions
@@ -96,11 +53,6 @@ static lvgl_port_ctx_t lvgl_port_ctx;
 static void lvgl_port_task(void *arg);
 static esp_err_t lvgl_port_tick_init(void);
 static void lvgl_port_task_deinit(void);
-#if defined(CONFIG_TAB5X_LVGL_TASK_DIAGNOSTICS)
-static void lvgl_port_diagnostics_init(void);
-static void lvgl_port_diagnostics_deinit(void);
-static void lvgl_port_diagnostics_task(void *arg);
-#endif
 
 /*******************************************************************************
  * Public API functions
@@ -296,9 +248,7 @@ static void lvgl_port_task(void *arg)
     xTaskNotifyGive(task_to_notify);
     /* Tick init */
     lvgl_port_tick_init();
-#if defined(CONFIG_TAB5X_LVGL_TASK_DIAGNOSTICS)
-    lvgl_port_diagnostics_init();
-#endif
+    tab5x_lvgl_diagnostics_init();
 
     ESP_LOGI(TAG, "Starting LVGL task: priority=%u core=%d stack_hwm_bytes=%u",
              (unsigned)uxTaskPriorityGet(NULL), xPortGetCoreID(),
@@ -310,20 +260,25 @@ static void lvgl_port_task(void *arg)
         events          = xEventGroupWaitBits(lvgl_port_ctx.lvgl_events, 0xFF, pdTRUE, pdFALSE, wait);
 
         if (lv_display_get_default()) {
-            LVGL_PORT_DIAGNOSTICS_HIT(a_before_lvgl_mux);
+            /*
+             * A/B: before/after lvgl_mux; C/D: before/after timer_mux;
+             * E/F: before/after explicit lv_indev_read(); G/H: before/after
+             * lv_timer_handler(); I: after releasing lvgl_mux.
+             */
+            TAB5X_LVGL_DIAG_HIT(A);
             if (lvgl_port_lock(0)) {
-                LVGL_PORT_DIAGNOSTICS_HIT(b_after_lvgl_mux);
+                TAB5X_LVGL_DIAG_HIT(B);
 
                 /* Call read input devices */
                 if (events & LVGL_PORT_EVENT_TOUCH) {
-                    LVGL_PORT_DIAGNOSTICS_HIT(c_before_timer_mux);
+                    TAB5X_LVGL_DIAG_HIT(C);
                     xSemaphoreTake(lvgl_port_ctx.timer_mux, portMAX_DELAY);
-                    LVGL_PORT_DIAGNOSTICS_HIT(d_after_timer_mux);
+                    TAB5X_LVGL_DIAG_HIT(D);
                     indev = lv_indev_get_next(NULL);
                     while (indev != NULL) {
-                        LVGL_PORT_DIAGNOSTICS_HIT(e_before_indev_read);
+                        TAB5X_LVGL_DIAG_HIT(E);
                         lv_indev_read(indev);
-                        LVGL_PORT_DIAGNOSTICS_HIT(f_after_indev_read);
+                        TAB5X_LVGL_DIAG_HIT(F);
                         indev = lv_indev_get_next(indev);
                     }
                     xSemaphoreGive(lvgl_port_ctx.timer_mux);
@@ -333,11 +288,11 @@ static void lvgl_port_task(void *arg)
                  * Handle all ready LVGL timers. The G-H interval can include
                  * input-device, display-refresh, animation, event, and user callbacks.
                  */
-                LVGL_PORT_DIAGNOSTICS_HIT(g_before_timer_handler);
+                TAB5X_LVGL_DIAG_HIT(G);
                 task_delay_ms = lv_timer_handler();
-                LVGL_PORT_DIAGNOSTICS_HIT(h_after_timer_handler);
+                TAB5X_LVGL_DIAG_HIT(H);
                 lvgl_port_unlock();
-                LVGL_PORT_DIAGNOSTICS_HIT(i_after_lvgl_mux_release);
+                TAB5X_LVGL_DIAG_HIT(I);
             } else {
                 task_delay_ms = 1; /*Keep trying*/
             }
@@ -368,9 +323,7 @@ static void lvgl_port_task(void *arg)
 
 static void lvgl_port_task_deinit(void)
 {
-#if defined(CONFIG_TAB5X_LVGL_TASK_DIAGNOSTICS)
-    lvgl_port_diagnostics_deinit();
-#endif
+    tab5x_lvgl_diagnostics_deinit();
     if (lvgl_port_ctx.timer_mux) {
         vSemaphoreDelete(lvgl_port_ctx.timer_mux);
     }
@@ -389,78 +342,6 @@ static void lvgl_port_task_deinit(void)
     lv_deinit();
 #endif
 }
-
-#if defined(CONFIG_TAB5X_LVGL_TASK_DIAGNOSTICS)
-static void lvgl_port_diagnostics_task(void *arg)
-{
-    (void)arg;
-
-    while (__atomic_load_n(&lvgl_port_ctx.diagnostics_running, __ATOMIC_RELAXED)) {
-        (void)ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(LVGL_PORT_DIAGNOSTICS_PERIOD_MS));
-        if (!__atomic_load_n(&lvgl_port_ctx.diagnostics_running, __ATOMIC_RELAXED)) {
-            break;
-        }
-
-        ESP_LOGI(TAG,
-                 "LVGL checkpoints: A=%u B=%u C=%u D=%u E=%u F=%u G=%u H=%u I=%u",
-                 (unsigned)__atomic_load_n(&lvgl_port_ctx.diagnostics.a_before_lvgl_mux, __ATOMIC_RELAXED),
-                 (unsigned)__atomic_load_n(&lvgl_port_ctx.diagnostics.b_after_lvgl_mux, __ATOMIC_RELAXED),
-                 (unsigned)__atomic_load_n(&lvgl_port_ctx.diagnostics.c_before_timer_mux, __ATOMIC_RELAXED),
-                 (unsigned)__atomic_load_n(&lvgl_port_ctx.diagnostics.d_after_timer_mux, __ATOMIC_RELAXED),
-                 (unsigned)__atomic_load_n(&lvgl_port_ctx.diagnostics.e_before_indev_read, __ATOMIC_RELAXED),
-                 (unsigned)__atomic_load_n(&lvgl_port_ctx.diagnostics.f_after_indev_read, __ATOMIC_RELAXED),
-                 (unsigned)__atomic_load_n(&lvgl_port_ctx.diagnostics.g_before_timer_handler, __ATOMIC_RELAXED),
-                 (unsigned)__atomic_load_n(&lvgl_port_ctx.diagnostics.h_after_timer_handler, __ATOMIC_RELAXED),
-                 (unsigned)__atomic_load_n(&lvgl_port_ctx.diagnostics.i_after_lvgl_mux_release, __ATOMIC_RELAXED));
-    }
-
-    xSemaphoreGive(lvgl_port_ctx.diagnostics_stopped_mux);
-    vTaskDelete(NULL);
-}
-
-static void lvgl_port_diagnostics_init(void)
-{
-    lvgl_port_ctx.diagnostics_stopped_mux = xSemaphoreCreateBinary();
-    if (lvgl_port_ctx.diagnostics_stopped_mux == NULL) {
-        ESP_LOGW(TAG, "Failed to create LVGL diagnostics stop semaphore");
-        return;
-    }
-
-    __atomic_store_n(&lvgl_port_ctx.diagnostics_running, true, __ATOMIC_RELAXED);
-    BaseType_t res = xTaskCreate(lvgl_port_diagnostics_task, "lvglDiag", LVGL_PORT_DIAGNOSTICS_TASK_STACK_SIZE, NULL,
-                                 LVGL_PORT_DIAGNOSTICS_TASK_PRIORITY, &lvgl_port_ctx.diagnostics_task);
-    if (res != pdPASS) {
-        __atomic_store_n(&lvgl_port_ctx.diagnostics_running, false, __ATOMIC_RELAXED);
-        vSemaphoreDelete(lvgl_port_ctx.diagnostics_stopped_mux);
-        lvgl_port_ctx.diagnostics_stopped_mux = NULL;
-        ESP_LOGW(TAG, "Failed to create LVGL checkpoint diagnostics task");
-        return;
-    }
-
-    ESP_LOGI(TAG, "LVGL checkpoint diagnostics enabled (5 s interval)");
-    ESP_LOGI(TAG, "A/B=LVGL mutex before/after, C/D=timer mutex before/after, E/F=indev read before/after");
-    ESP_LOGI(TAG, "G/H=timer handler before/after, I=LVGL mutex released");
-}
-
-static void lvgl_port_diagnostics_deinit(void)
-{
-    if (lvgl_port_ctx.diagnostics_task != NULL) {
-        __atomic_store_n(&lvgl_port_ctx.diagnostics_running, false, __ATOMIC_RELAXED);
-        xTaskNotifyGive(lvgl_port_ctx.diagnostics_task);
-        if (lvgl_port_ctx.diagnostics_stopped_mux == NULL ||
-            xSemaphoreTake(lvgl_port_ctx.diagnostics_stopped_mux, pdMS_TO_TICKS(1000)) != pdTRUE) {
-            ESP_LOGW(TAG, "LVGL checkpoint diagnostics task did not stop cleanly");
-            vTaskDelete(lvgl_port_ctx.diagnostics_task);
-        }
-        lvgl_port_ctx.diagnostics_task = NULL;
-    }
-
-    if (lvgl_port_ctx.diagnostics_stopped_mux != NULL) {
-        vSemaphoreDelete(lvgl_port_ctx.diagnostics_stopped_mux);
-        lvgl_port_ctx.diagnostics_stopped_mux = NULL;
-    }
-}
-#endif
 
 static void lvgl_port_tick_increment(void *arg)
 {

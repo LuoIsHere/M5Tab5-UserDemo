@@ -9,6 +9,7 @@
 #include "esp_check.h"
 #include "esp_lcd_touch.h"
 #include "esp_lvgl_port.h"
+#include "tab5x_lvgl_diagnostics.h"
 
 static const char *TAG = "LVGL";
 
@@ -107,6 +108,8 @@ esp_err_t lvgl_port_remove_touch(lv_indev_t *touch)
 
 static void lvgl_port_touchpad_read(lv_indev_t *indev_drv, lv_indev_data_t *data)
 {
+    /* Z/AA: before/after the esp_lvgl_port/ST712x touch read callback. */
+    TAB5X_LVGL_DIAG_HIT(Z);
     assert(indev_drv);
     lvgl_port_touch_ctx_t *touch_ctx = (lvgl_port_touch_ctx_t *)lv_indev_get_driver_data(indev_drv);
     assert(touch_ctx);
@@ -130,6 +133,7 @@ static void lvgl_port_touchpad_read(lv_indev_t *indev_drv, lv_indev_data_t *data
     } else {
         data->state = LV_INDEV_STATE_RELEASED;
     }
+    TAB5X_LVGL_DIAG_HIT(AA);
 }
 
 static void IRAM_ATTR lvgl_port_touch_interrupt_callback(esp_lcd_touch_handle_t tp)

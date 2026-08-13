@@ -23,6 +23,7 @@
 #include "esp_video_init.h"
 #include "esp_video_device.h"
 #include "driver/ppa.h"
+#include "tab5x_lvgl_diagnostics.h"
 
 #define CAMERA_WIDTH  1280
 #define CAMERA_HEIGHT 720
@@ -840,7 +841,10 @@ static void app_camera_display(void* arg)
                     .user_data = nullptr,
                 };
 
+                /* AF/AG: before/after the camera's blocking PPA transaction. */
+                TAB5X_LVGL_DIAG_HIT(AF);
                 result = ppa_do_scale_rotate_mirror(ppa_handle, &srm_config);
+                TAB5X_LVGL_DIAG_HIT(AG);
                 if (result != ESP_OK) {
                     ESP_LOGE(TAG, "PPA processing failed: %s", esp_err_to_name(result));
                 } else if (!camera_stop_requested()) {

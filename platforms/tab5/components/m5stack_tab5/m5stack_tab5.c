@@ -34,6 +34,7 @@
 #include "esp_codec_dev_defaults.h"
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
+#include "tab5x_lvgl_diagnostics.h"
 
 static const char* TAG = "M5STACK_TAB5";
 
@@ -1913,8 +1914,11 @@ esp_lcd_touch_handle_t bsp_display_get_touch_handle(void)
 
 static void lvgl_read_cb(lv_indev_t* indev, lv_indev_data_t* data)
 {
+    /* AB/AC: before/after the BSP GT911 touch read callback. */
+    TAB5X_LVGL_DIAG_HIT(AB);
     if (_lcd_touch_handle == NULL) {
         data->state = LV_INDEV_STATE_REL;
+        TAB5X_LVGL_DIAG_HIT(AC);
         return;
     }
 
@@ -1934,6 +1938,7 @@ static void lvgl_read_cb(lv_indev_t* indev, lv_indev_data_t* data)
         data->point.x = touch_x[0];
         data->point.y = touch_y[0];
     }
+    TAB5X_LVGL_DIAG_HIT(AC);
 }
 
 static lv_indev_t* bsp_display_indev_init(lv_display_t* disp)

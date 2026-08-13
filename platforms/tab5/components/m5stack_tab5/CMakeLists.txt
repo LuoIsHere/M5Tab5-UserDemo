@@ -20,5 +20,6 @@ idf_component_register(
         esp_lcd_touch_st7123
         esp_lcd_st7121
         sdmmc
+        tab5x_lvgl_diagnostics
     PRIV_REQUIRES usb spiffs fatfs
 )

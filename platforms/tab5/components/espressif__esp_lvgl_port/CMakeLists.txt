@@ -10,7 +10,7 @@ endif()
 idf_component_register(
         INCLUDE_DIRS "include"
         PRIV_INCLUDE_DIRS "priv_include"
-        REQUIRES "esp_lcd" "esp_driver_ppa" "esp_mm"
+        REQUIRES "esp_lcd" "esp_driver_ppa" "esp_mm" "tab5x_lvgl_diagnostics"
         PRIV_REQUIRES "esp_driver_ppa" "esp_mm")
 
 # Get LVGL version
@@ -117,6 +117,7 @@ target_link_libraries(lvgl_port_lib PUBLIC
     idf::${lvgl_name}
     idf::esp_driver_ppa
     idf::esp_mm
+    idf::tab5x_lvgl_diagnostics
     )
 target_link_libraries(lvgl_port_lib PRIVATE
     idf::esp_timer

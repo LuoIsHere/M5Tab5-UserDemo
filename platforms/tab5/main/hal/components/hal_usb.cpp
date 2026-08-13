@@ -16,6 +16,7 @@
 #include <usb/hid_usage_mouse.h>
 #include <esp_log.h>
 #include <assets/assets.h>
+#include "tab5x_lvgl_diagnostics.h"
 
 #define TAG "usba"
 
@@ -230,6 +231,8 @@ static void tab5_usb_host_task(void* pvParameters)
 
 static void lvgl_mouse_read_cb(lv_indev_t* indev, lv_indev_data_t* data)
 {
+    /* AD/AE: before/after USB mouse read, including both C++ mutex waits. */
+    TAB5X_LVGL_DIAG_HIT(AD);
     _usba_detect_mutex.lock();
     if (!_is_usba_connected) {
         _usba_detect_mutex.unlock();
@@ -237,6 +240,7 @@ static void lvgl_mouse_read_cb(lv_indev_t* indev, lv_indev_data_t* data)
         if (lv_obj_get_style_opa(_cursor_img, LV_PART_MAIN) == LV_OPA_COVER) {
             lv_obj_set_style_opa(_cursor_img, LV_OPA_TRANSP, LV_PART_MAIN);
         }
+        TAB5X_LVGL_DIAG_HIT(AE);
         return;
     }
     _usba_detect_mutex.unlock();
@@ -248,6 +252,7 @@ static void lvgl_mouse_read_cb(lv_indev_t* indev, lv_indev_data_t* data)
     data->point.x = GetHAL()->hidMouseData.x;
     data->point.y = GetHAL()->hidMouseData.y;
     data->state   = GetHAL()->hidMouseData.btnLeft ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
+    TAB5X_LVGL_DIAG_HIT(AE);
 }
 
 void HalEsp32::hid_init()

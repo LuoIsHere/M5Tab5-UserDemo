@@ -18,6 +18,7 @@
 #include "esp_lcd_panel_ops.h"
 #include "esp_lvgl_port.h"
 #include "esp_lvgl_port_priv.h"
+#include "tab5x_lvgl_diagnostics.h"
 #include "driver/ppa.h"
 #include "esp_heap_caps.h"
 #include "esp_private/esp_cache_private.h"
@@ -254,7 +255,10 @@ esp_err_t lvgl_port_remove_disp(lv_display_t* disp)
 void lvgl_port_flush_ready(lv_display_t* disp)
 {
     assert(disp);
+    /* V/W: before/after lv_disp_flush_ready(). */
+    TAB5X_LVGL_DIAG_HIT(V);
     lv_disp_flush_ready(disp);
+    TAB5X_LVGL_DIAG_HIT(W);
 }
 
 /*******************************************************************************
@@ -456,7 +460,11 @@ static bool lvgl_port_flush_io_ready_callback(esp_lcd_panel_io_handle_t panel_io
 {
     lv_display_t* disp_drv = (lv_display_t*)user_ctx;
     assert(disp_drv != NULL);
+    /* U: display transfer completion callback entered; V/W: flush ready call. */
+    TAB5X_LVGL_DIAG_HIT(U);
+    TAB5X_LVGL_DIAG_HIT(V);
     lv_disp_flush_ready(disp_drv);
+    TAB5X_LVGL_DIAG_HIT(W);
     return false;
 }
 
@@ -466,13 +474,19 @@ static bool lvgl_port_flush_dpi_panel_ready_callback(esp_lcd_panel_handle_t pane
 {
     lv_display_t* disp_drv = (lv_display_t*)user_ctx;
     assert(disp_drv != NULL);
+    /* U: display transfer completion callback entered; V/W: flush ready call. */
+    TAB5X_LVGL_DIAG_HIT(U);
+    TAB5X_LVGL_DIAG_HIT(V);
     lv_disp_flush_ready(disp_drv);
+    TAB5X_LVGL_DIAG_HIT(W);
     return false;
 }
 
 static bool lvgl_port_flush_dpi_vsync_ready_callback(esp_lcd_panel_handle_t panel_io,
                                                      esp_lcd_dpi_panel_event_data_t* edata, void* user_ctx)
 {
+    /* U: DSI refresh-completion callback entered. */
+    TAB5X_LVGL_DIAG_HIT(U);
     BaseType_t need_yield = pdFALSE;
 
     lv_display_t* disp_drv = (lv_display_t*)user_ctx;
@@ -492,6 +506,8 @@ static bool lvgl_port_flush_dpi_vsync_ready_callback(esp_lcd_panel_handle_t pane
 static bool lvgl_port_flush_rgb_vsync_ready_callback(esp_lcd_panel_handle_t panel_io,
                                                      const esp_lcd_rgb_panel_event_data_t* edata, void* user_ctx)
 {
+    /* U: RGB refresh-completion callback entered. */
+    TAB5X_LVGL_DIAG_HIT(U);
     BaseType_t need_yield = pdFALSE;
 
     lv_display_t* disp_drv = (lv_display_t*)user_ctx;
@@ -662,7 +678,14 @@ IRAM_ATTR static void rotate_copy_pixel(const uint16_t* from, uint16_t* to, uint
         .mode           = PPA_TRANS_MODE_BLOCKING,
     };
 
+    /*
+     * P/Q: before/after the blocking display PPA call. This pair includes
+     * both internal ESP-IDF engine and transaction semaphore waits; they
+     * cannot be separated without modifying the external IDF ppa_core.c.
+     */
+    TAB5X_LVGL_DIAG_HIT(P);
     ESP_ERROR_CHECK(ppa_do_scale_rotate_mirror(ppa_srm_handle, &oper_config));
+    TAB5X_LVGL_DIAG_HIT(Q);
 }
 
 static void lvgl_port_flush_callback(lv_display_t* drv, const lv_area_t* area, uint8_t* color_map)
@@ -698,8 +721,11 @@ static void lvgl_port_flush_callback(lv_display_t* drv, const lv_area_t* area, u
                 //                   LV_DISPLAY_ROTATION_90, cf);
                 // rotate_copy_pixel((uint16_t*)color_map, (uint16_t*)disp_ctx->draw_buffs[2], offsetx1, offsety1,
                 //                   offsetx2, offsety2, LV_HOR_RES, LV_VER_RES, 270);
+                /* N/O: before/after rotate_copy_pixel(), including its blocking PPA call. */
+                TAB5X_LVGL_DIAG_HIT(N);
                 rotate_copy_pixel((uint16_t*)color_map, (uint16_t*)disp_ctx->draw_buffs[2], 0, 0, offsetx2 - offsetx1,
                                   offsety2 - offsety1, offsetx2 - offsetx1 + 1, offsety2 - offsety1 + 1, 270);
+                TAB5X_LVGL_DIAG_HIT(O);
             } else if (disp_ctx->current_rotation == LV_DISPLAY_ROTATION_270) {
                 lv_draw_sw_rotate(color_map, disp_ctx->draw_buffs[2], ww, hh, w_stride, h_stride,
                                   LV_DISPLAY_ROTATION_270, cf);
@@ -727,20 +753,39 @@ static void lvgl_port_flush_callback(lv_display_t* drv, const lv_area_t* area, u
         (disp_ctx->flags.direct_mode || disp_ctx->flags.full_refresh)) {
         if (lv_disp_flush_is_last(drv)) {
             /* If the interface is I80 or SPI, this step cannot be used for drawing. */
-            esp_lcd_panel_draw_bitmap(disp_ctx->panel_handle, 0, 0, lv_disp_get_hor_res(drv), lv_disp_get_ver_res(drv),
-                                      color_map);
+            /* R/S: before/after LCD draw; T: transfer accepted successfully. */
+            TAB5X_LVGL_DIAG_HIT(R);
+            esp_err_t draw_result = esp_lcd_panel_draw_bitmap(disp_ctx->panel_handle, 0, 0,
+                                                               lv_disp_get_hor_res(drv), lv_disp_get_ver_res(drv),
+                                                               color_map);
+            tab5x_lvgl_diagnostics_set_last_draw_result(draw_result);
+            TAB5X_LVGL_DIAG_HIT(S);
+            if (draw_result == ESP_OK) {
+                TAB5X_LVGL_DIAG_HIT(T);
+            }
             /* Waiting for the last frame buffer to complete transmission */
             // xSemaphoreTake(disp_ctx->trans_sem, 0);
             // xSemaphoreTake(disp_ctx->trans_sem, portMAX_DELAY);
         }
     } else {
-        esp_lcd_panel_draw_bitmap(disp_ctx->panel_handle, offsetx1, offsety1, offsetx2 + 1, offsety2 + 1, color_map);
+        /* R/S: before/after LCD draw; T: transfer accepted successfully. */
+        TAB5X_LVGL_DIAG_HIT(R);
+        esp_err_t draw_result =
+            esp_lcd_panel_draw_bitmap(disp_ctx->panel_handle, offsetx1, offsety1, offsetx2 + 1, offsety2 + 1, color_map);
+        tab5x_lvgl_diagnostics_set_last_draw_result(draw_result);
+        TAB5X_LVGL_DIAG_HIT(S);
+        if (draw_result == ESP_OK) {
+            TAB5X_LVGL_DIAG_HIT(T);
+        }
     }
 
     if (disp_ctx->disp_type == LVGL_PORT_DISP_TYPE_RGB ||
         (disp_ctx->disp_type == LVGL_PORT_DISP_TYPE_DSI &&
          (disp_ctx->flags.direct_mode || disp_ctx->flags.full_refresh))) {
+        /* V/W: before/after the direct lv_disp_flush_ready() path. */
+        TAB5X_LVGL_DIAG_HIT(V);
         lv_disp_flush_ready(drv);
+        TAB5X_LVGL_DIAG_HIT(W);
     }
 }
 
