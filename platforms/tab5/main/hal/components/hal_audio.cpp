@@ -10,7 +10,9 @@
 #include <string.h>
 #include <inttypes.h>
 #include <bsp/m5stack_tab5.h>
+#include <esp_heap_caps.h>
 #include <freertos/FreeRTOS.h>
+#include <freertos/idf_additions.h>
 #include <freertos/task.h>
 #include <thread>
 #include <mutex>
@@ -584,7 +586,7 @@ static void _music_play_task(void* param)
         _music_test_data.state = (ret == ESP_OK) ? hal::HalBase::MUSIC_PLAY_IDLE
                                                   : hal::HalBase::MUSIC_PLAY_ERROR;
     }
-    vTaskDelete(nullptr);
+    vTaskDeleteWithCaps(nullptr);
 }
 
 static void try_create_music_play_task(Mp3PlayTarget_t target)
@@ -598,8 +600,9 @@ static void try_create_music_play_task(Mp3PlayTarget_t target)
     _music_test_data.state = hal::HalBase::MUSIC_PLAY_STARTING;
     _music_test_data.target = target;
     _music_test_data.lastError = ESP_OK;
-    BaseType_t task_ret = xTaskCreate(_music_play_task, "music", 4096, nullptr, 5,
-                                      &_music_test_data.taskHandle);
+    BaseType_t task_ret = xTaskCreateWithCaps(_music_play_task, "music", 4096, nullptr, 5,
+                                              &_music_test_data.taskHandle,
+                                              MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (task_ret != pdPASS) {
         _music_test_data.taskHandle = nullptr;
         _music_test_data.lastError = ESP_ERR_NO_MEM;

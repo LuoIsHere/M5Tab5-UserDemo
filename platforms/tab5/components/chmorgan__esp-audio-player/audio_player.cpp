@@ -30,6 +30,7 @@
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/idf_additions.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
@@ -511,7 +512,7 @@ static void audio_task(void *pvParam) {
                     xSemaphoreGive(i->task_exit_sem);
 
                     // should never return
-                    vTaskDelete(NULL);
+                    vTaskDeleteWithCaps(NULL);
                     break;
                 } else {
                     // ignore other events when not playing
@@ -634,6 +635,7 @@ esp_err_t audio_instance_new(audio_instance_handle_t *h, audio_player_config_t *
     BaseType_t task_val;
     constexpr uint32_t audio_task_stack_bytes = 8 * 1024;
     constexpr uint32_t internal_caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+    constexpr uint32_t audio_psram_caps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
 
     ESP_RETURN_ON_FALSE(h != NULL, ESP_ERR_INVALID_ARG, TAG, "handle pointer is NULL");
     ESP_RETURN_ON_FALSE(*h == NULL, ESP_ERR_INVALID_ARG, TAG, "instance is not NULL");
@@ -657,14 +659,16 @@ esp_err_t audio_instance_new(audio_instance_handle_t *h, audio_player_config_t *
     /** See https://github.com/ultraembedded/libhelix-mp3/blob/0a0e0673f82bc6804e5a3ddb15fb6efdcde747cd/testwrap/main.c#L74 */
     i->output.samples_capacity = MAX_NCHAN * MAX_NGRAN * MAX_NSAMP;
     i->output.samples_capacity_max = i->output.samples_capacity * 2;
-    i->output.samples = static_cast<uint8_t*>(malloc(i->output.samples_capacity_max));
+    i->output.samples = static_cast<uint8_t*>(
+        heap_caps_malloc(i->output.samples_capacity_max, audio_psram_caps));
     LOGI_1("samples_capacity %d bytes", i->output.samples_capacity_max);
     ESP_GOTO_ON_FALSE(NULL != i->output.samples, ESP_ERR_NO_MEM, cleanup,
         TAG, "Failed allocate output buffer");
 
 #if defined(CONFIG_AUDIO_PLAYER_ENABLE_MP3)
     i->mp3_data.data_buf_size = MAINBUF_SIZE * 3;
-    i->mp3_data.data_buf = static_cast<uint8_t*>(malloc(i->mp3_data.data_buf_size));
+    i->mp3_data.data_buf = static_cast<uint8_t*>(
+        heap_caps_malloc(i->mp3_data.data_buf_size, audio_psram_caps));
     ESP_GOTO_ON_FALSE(NULL != i->mp3_data.data_buf, ESP_ERR_NO_MEM, cleanup,
         TAG, "Failed allocate mp3 data buffer");
 
@@ -677,21 +681,24 @@ esp_err_t audio_instance_new(audio_instance_handle_t *h, audio_player_config_t *
 
     i->running = true;
 
-    // free is the total available internal heap; largest is the maximum contiguous block and
-    // therefore determines whether the dynamically allocated Audio Task stack can be created.
-    ESP_LOGI(TAG, "Audio task create memory: internal free/largest=%u/%u stack_bytes=%u",
+    // The TCB remains in internal RAM, while the Audio Task stack is allocated from PSRAM.
+    ESP_LOGI(TAG, "Audio task create memory: internal free/largest=%u/%u "
+                  "psram free/largest=%u/%u stack_bytes=%u",
              static_cast<unsigned>(heap_caps_get_free_size(internal_caps)),
              static_cast<unsigned>(heap_caps_get_largest_free_block(internal_caps)),
+             static_cast<unsigned>(heap_caps_get_free_size(audio_psram_caps)),
+             static_cast<unsigned>(heap_caps_get_largest_free_block(audio_psram_caps)),
              static_cast<unsigned>(audio_task_stack_bytes));
 
-    task_val = xTaskCreatePinnedToCore(
+    task_val = xTaskCreatePinnedToCoreWithCaps(
         (TaskFunction_t)        audio_task,
                                 "Audio Task",
                                 audio_task_stack_bytes,
                                 i,
         (UBaseType_t)           i->config.priority,
                                 &i->task_handle,
-        (BaseType_t)            i->config.coreID);
+        (BaseType_t)            i->config.coreID,
+                                audio_psram_caps);
 
     if (task_val != pdPASS) {
         i->running = false;
